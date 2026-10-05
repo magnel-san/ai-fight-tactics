@@ -70,7 +70,11 @@ export function useCharacterStore(): CharacterStore {
   }, []);
 
   // 起動時:共有URLで来たキャラを受け取り、前回のキャラを開く
+  // (開発時の StrictMode では effect が2回呼ばれるので、1回だけ実行する)
+  const started = useRef(false);
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     (async () => {
       try {
         const code = shareCodeFromLocation();
