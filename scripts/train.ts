@@ -9,6 +9,7 @@
 //   --opponents       押し合いの相手(弱い順。rush = 同じ体の突進BOT、self = 学習開始時の自分の判断脳、standard = 同梱の標準BOT)
 //   --out ファイル     保存先(10世代ごとと、合格の確認に通ったときに保存する)
 //   --seed N
+//   --level N         生き残りを始めるレベル(省略時は保存されているレベル)
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createDecisionGenome } from '../src/core/brain/decision';
 import { createMotorGenome } from '../src/core/brain/motor';
@@ -44,6 +45,7 @@ else {
   character = newCharacter(arg('name') ?? '標準BOT', bp);
 }
 if (arg('name')) character.name = arg('name')!;
+if (arg('level')) character.progress.surviveLevel = Number(arg('level'));
 
 const genome =
   task.brain === 'motor'
