@@ -1,0 +1,10 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Rng > 既知の出力と一致する(実装が変わったら検知する) 1`] = `
+[
+  518667457,
+  440444462,
+  4232892992,
+  3757857622,
+]
+`;
