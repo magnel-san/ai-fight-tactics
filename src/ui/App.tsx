@@ -1,5 +1,5 @@
 // トップ画面。キャラクリエイト・トレーニング・バトル・マイキャラを切り替える。
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { rebuildBody } from '../core/character';
 import { parseCharacter } from '../core/codec';
 import type { Blueprint } from '../core/creature/blueprint';
@@ -36,6 +36,14 @@ export function App() {
   const [battleReplay, setBattleReplay] = useState<BattleRecord | null>(null);
   const [trainReplay, setTrainReplay] = useState<TrainReplay | null>(null);
   const [preferredOpponent, setPreferredOpponent] = useState<string | null>(null);
+
+  // 共有URLで受け取ったリプレイはバトル画面で再生する
+  useEffect(() => {
+    if (store.ready && store.sharedReplay) {
+      setBattleReplay(store.sharedReplay);
+      setTab('battle');
+    }
+  }, [store.ready, store.sharedReplay]);
 
   // 体を組み直すと運動脳はリセットする(仕様書セクション4)
   const setBlueprint = useCallback(

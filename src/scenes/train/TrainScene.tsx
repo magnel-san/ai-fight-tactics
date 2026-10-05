@@ -91,6 +91,7 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [away, setAway] = useState<AwaySummary | null>(null);
   const [comparing, setComparing] = useState(false);
+  const [population, setPopulation] = useState<number>(TRAINING.population);
 
   const characterRef = useRef(character);
   characterRef.current = character;
@@ -292,6 +293,8 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
         },
         t === 'push' ? opponents : [],
         c.progress.passed.includes(t),
+        undefined,
+        population,
       );
       trainerRef.current = trainer;
       trainer.start();
@@ -410,6 +413,16 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
           <div className={`badge ${passed ? 'ok' : ''}`}>{passed ? '合格' : `合格条件:${def.passCondition}`}</div>
         </div>
 
+        <label className="inline-field" title="多いほど1世代に時間がかかるが、上達しやすい">
+          個体数
+          <select value={population} disabled={running} onChange={(e) => setPopulation(Number(e.target.value))}>
+            {[TRAINING.populationMin, TRAINING.population, TRAINING.populationMax].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="row">
           {running ? (
             <button onClick={stop}>停止</button>

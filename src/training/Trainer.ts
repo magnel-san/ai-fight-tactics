@@ -4,7 +4,7 @@ import { CHASE_TASK, SURVIVE_TASK, TRAINING } from '../core/config';
 import { Rng } from '../core/math/rng';
 import type { EpisodeFlags } from '../core/training/episode';
 import type { Sector } from '../core/training/move';
-import { GeneticAlgorithm, type GenerationStats } from '../core/training/ga';
+import { DEFAULT_GA_OPTIONS, GeneticAlgorithm, type GenerationStats } from '../core/training/ga';
 import { TASKS, type EvalResult, type FighterData, type TaskName, type TaskSetup } from '../core/training/tasks';
 import { WorkerPool, type EvalPool } from './WorkerPool';
 
@@ -74,9 +74,12 @@ export class Trainer {
     alreadyPassed = false,
     /** 評価に使うプール(省略時はブラウザの WorkerPool を作る) */
     private poolFactory: () => EvalPool = () => new WorkerPool(),
+    /** 個体数(32〜128) */
+    population: number = TRAINING.population,
   ) {
     this.rng = new Rng(seed);
-    this.ga = new GeneticAlgorithm(initialGenome, this.rng.nextU32());
+    const size = Math.min(TRAINING.populationMax, Math.max(TRAINING.populationMin, population));
+    this.ga = new GeneticAlgorithm(initialGenome, this.rng.nextU32(), { ...DEFAULT_GA_OPTIONS, population: size });
     this.setup = { ...setup };
     this.passed = alreadyPassed;
     if (task === 'push') {

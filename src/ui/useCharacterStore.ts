@@ -17,7 +17,7 @@ import {
   type PoolEntry,
   type StoredCharacter,
 } from '../storage/db';
-import { clearShareHash, decodeShareCode, shareCodeFromLocation } from '../storage/share';
+import { clearShareHash, decodeReplayCode, decodeShareCode, replayCodeFromLocation, shareCodeFromLocation, type SharedReplay } from '../storage/share';
 
 const SAVE_DELAY = 800;
 
@@ -30,6 +30,8 @@ export interface CharacterStore {
   pool: PoolEntry[];
   /** 共有URLで受け取ったキャラの名前(受け取った直後の案内用) */
   received: string | null;
+  /** 共有URLで受け取った試合のリプレイ */
+  sharedReplay: SharedReplay | null;
   dismissReceived(): void;
   error: string | null;
   create(): Promise<void>;
@@ -49,6 +51,7 @@ export function useCharacterStore(): CharacterStore {
   const [library, setLibrary] = useState<StoredCharacter[]>([]);
   const [pool, setPool] = useState<PoolEntry[]>([]);
   const [received, setReceived] = useState<string | null>(null);
+  const [sharedReplay, setSharedReplay] = useState<SharedReplay | null>(null);
   const [error, setError] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeIdRef = useRef('');
@@ -85,6 +88,15 @@ export function useCharacterStore(): CharacterStore {
             setReceived(c.name);
           } catch (e) {
             setError(`共有されたキャラを読めませんでした:${(e as Error).message}`);
+          }
+          clearShareHash();
+        }
+        const replayCode = replayCodeFromLocation();
+        if (replayCode) {
+          try {
+            setSharedReplay(await decodeReplayCode(replayCode));
+          } catch (e) {
+            setError(`共有されたリプレイを読めませんでした:${(e as Error).message}`);
           }
           clearShareHash();
         }
@@ -146,6 +158,7 @@ export function useCharacterStore(): CharacterStore {
     library,
     pool,
     received,
+    sharedReplay,
     dismissReceived: () => setReceived(null),
     error,
     async create() {

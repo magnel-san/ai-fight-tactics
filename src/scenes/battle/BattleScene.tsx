@@ -7,6 +7,7 @@ import { initRapier, type Rapier } from '../../core/physics/rapier';
 import { MatchEpisode, type MatchResult } from '../../core/sim/match';
 import type { FighterData } from '../../core/training/tasks';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
+import { downloadReplay, replayShareUrl } from '../../storage/share';
 import { TEAM_COLORS } from '../../render/creatureMesh';
 
 export interface OpponentEntry {
@@ -68,6 +69,7 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
   const [result, setResult] = useState<MatchResult | null>(null);
   const [hud, setHud] = useState<Hud | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const lastHud = useRef(0);
   const finishedRef = useRef(onFinished);
   finishedRef.current = onFinished;
@@ -186,8 +188,22 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
           </button>
         </div>
         {record && (
-          <div className="row">
+          <div className="row wrap">
             <button onClick={() => play(record)}>もう一度見る</button>
+            <button
+              onClick={async () => {
+                try {
+                  const u = await replayShareUrl(record);
+                  await navigator.clipboard.writeText(u).catch(() => {});
+                  setNotice(`リプレイの共有URLをコピーしました(${u.length.toLocaleString()}文字)`);
+                } catch (e) {
+                  setError(String(e));
+                }
+              }}
+            >
+              リプレイを共有
+            </button>
+            <button onClick={() => downloadReplay(record)}>リプレイを保存</button>
             {onAddToPool && opponent && opponent.kind !== 'BOT' && (
               <button onClick={() => onAddToPool(opponent)} title="押し合いトレーニングの相手に加えます">
                 相手をトレーニングに登録
@@ -196,6 +212,7 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
           </div>
         )}
         {error && <p className="message error">{error}</p>}
+        {notice && <p className="message">{notice}</p>}
 
         {result && (
           <div className={`result ${result.winner === 0 ? 'win' : result.winner === 1 ? 'lose' : 'draw'}`}>

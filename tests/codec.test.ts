@@ -80,3 +80,24 @@ describe('キャラのJSON', () => {
     expect(back.progress.generations.move).toBeUndefined();
   });
 });
+
+describe('試合のリプレイ', () => {
+  it('シードと両キャラのデータが往復で一致し、判断脳のない相手は突進BOTになる', async () => {
+    const { replayToJson, parseReplay } = await import('../src/storage/share');
+    const me = sample();
+    const rec = {
+      seed: 12345,
+      names: ['わたし', '突進BOT'] as [string, string],
+      fighters: [
+        { blueprint: me.blueprint, motor: me.motor!, decision: me.decision, controller: 'brain' as const },
+        { blueprint: me.blueprint, motor: me.motor!, decision: null, controller: 'rush' as const },
+      ] as [ReturnType<typeof Object>, ReturnType<typeof Object>],
+    };
+    const back = parseReplay(replayToJson(rec as never));
+    expect(back.seed).toBe(12345);
+    expect(back.names).toEqual(['わたし', '突進BOT']);
+    expect([...back.fighters[0].decision!]).toEqual([...me.decision!]);
+    expect(back.fighters[1].controller).toBe('rush');
+    expect(() => parseReplay('{"kind":"other"}')).toThrow();
+  });
+});
