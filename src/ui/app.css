@@ -251,3 +251,87 @@ button.selected {
 .tab-page[hidden] {
   display: none;
 }
+
+/* トレーニング */
+.train {
+  display: flex;
+  height: 100%;
+}
+.menu-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+}
+.menu-item.selected {
+  border-color: var(--accent);
+}
+.menu-title {
+  font-weight: 600;
+}
+.menu-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 2px 0 6px;
+}
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #2b3240;
+  color: var(--muted);
+}
+.badge.ok {
+  background: #1f4a33;
+  color: var(--ok);
+  font-weight: 600;
+}
+button.primary {
+  background: #1f6f8b;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.speed {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  display: flex;
+  gap: 4px;
+}
+.speed button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.chart polyline,
+.chart .legend line {
+  fill: none;
+  stroke-width: 1.8;
+}
+.chart .best {
+  stroke: var(--accent);
+}
+.chart .mean {
+  stroke: #9aa5b1;
+  stroke-dasharray: 3 2;
+}
+.chart .zero {
+  stroke: var(--line);
+}
+.chart .pass {
+  stroke: var(--ok);
+  stroke-dasharray: 2 2;
+}
+.chart text {
+  fill: var(--muted);
+  font-size: 10px;
+}
+.chart-empty {
+  color: var(--muted);
+  font-size: 12px;
+}

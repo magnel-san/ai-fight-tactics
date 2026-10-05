@@ -3,6 +3,7 @@
 import type { ImpulseJoint, RevoluteImpulseJoint, RigidBody } from '@dimforge/rapier3d-compat';
 import { BLOCKS, CREATURE } from '../config';
 import { atan2, cos, sin } from '../math/fmath';
+import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
 import { AXIS_DIR, blockPositions, segmentsOf, validate, type Blueprint } from './blueprint';
 
@@ -138,17 +139,4 @@ export function jointStates(creature: Creature): { angle: number; velocity: numb
     // 角度は (-π, π] に正規化する
     return { angle: angle > Math.PI ? angle - 2 * Math.PI : angle < -Math.PI ? angle + 2 * Math.PI : angle, velocity };
   });
-}
-
-/** クォータニオン q でベクトル (x, y, z) を回転する */
-function rotate(q: { x: number; y: number; z: number; w: number }, x: number, y: number, z: number): [number, number, number] {
-  // v' = v + 2w (u×v) + 2 u×(u×v)、u = (q.x, q.y, q.z)
-  const cx = q.y * z - q.z * y;
-  const cy = q.z * x - q.x * z;
-  const cz = q.x * y - q.y * x;
-  return [
-    x + 2 * (q.w * cx + q.y * cz - q.z * cy),
-    y + 2 * (q.w * cy + q.z * cx - q.x * cz),
-    z + 2 * (q.w * cz + q.x * cy - q.y * cx),
-  ];
 }

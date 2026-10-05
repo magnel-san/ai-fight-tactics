@@ -82,10 +82,45 @@ export const BATTLE = {
 } as const;
 
 export const BRAIN = {
+  /** 運動脳の入力のうち、関節数によらない部分(指令3・姿勢3・速度6・リズム2・足元3) */
+  motorFixedInputs: 17,
   motorHidden: 32,
   decisionInputs: 35,
   decisionHidden: 24,
   decisionOutputs: 3,
+  /** センサー値を -1〜1 程度にそろえるための目安 */
+  linvelScale: 2,
+  angvelScale: 5,
+  jointVelScale: 10,
+  /** リズム信号の周期 [s]。遺伝子として学習するが、この範囲に収める */
+  rhythmPeriodMin: 0.3,
+  rhythmPeriodMax: 2.0,
+  rhythmPeriodInit: 1.0,
+} as const;
+
+/** トレーニング「目標地点への移動」(仕様書セクション9) */
+export const MOVE_TASK = {
+  targetDistMin: 4,
+  targetDistMax: 6,
+  /** 制限時間 [s](合格条件の「15秒以内に到達」と同じ) */
+  timeLimit: 15,
+  /** コア中心が目標からこの水平距離以内に入ったら到達 [m] */
+  arriveRadius: 0.6,
+  /** 到達ボーナスと、残り時間の割合にかける早着ボーナス */
+  arriveBonus: 5,
+  arriveTimeBonus: 5,
+  /** コアが裏返っている間の減点 [/s] */
+  flipPenaltyPerSec: 1,
+  /** 床の半分の大きさ [m] */
+  groundHalfSize: 30,
+  /** 合格条件:評価エピソードのうち、到達しなければならない回数 */
+  passCount: 2,
+  /**
+   * 合格の確認。世代の評価で合格条件を満たした個体を、新しいシードのエピソードでもう一度評価し、
+   * 同じ割合(2/3)以上で到達したら合格とする。3回だけでは目標の向きの運で合格してしまうため
+   */
+  confirmEpisodes: 9,
+  confirmPassCount: 6,
 } as const;
 
 export const TRAINING = {
@@ -103,4 +138,6 @@ export const TRAINING = {
   stagnationGenerations: 10,
   workersMin: 2,
   workersMax: 8,
+  /** σ の下限(小さくなりすぎて進化が止まるのを防ぐ) */
+  sigmaMin: 0.005,
 } as const;
