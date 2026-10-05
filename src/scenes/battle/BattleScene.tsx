@@ -73,6 +73,9 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
   const lastHud = useRef(0);
   const finishedRef = useRef(onFinished);
   finishedRef.current = onFinished;
+  const replayRef = useRef(replay);
+  replayRef.current = replay;
+  const playRef = useRef<(rec: BattleRecord) => void>(() => {});
 
   // 一覧の先頭が変わったら(マイキャラ画面で相手を選んだときなど)、その相手を選ぶ
   const firstId = opponents[0]?.id;
@@ -89,7 +92,10 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
     viewerRef.current = viewer;
     let cancelled = false;
     initRapier().then((R) => {
-      if (!cancelled) rapierRef.current = R;
+      if (cancelled) return;
+      rapierRef.current = R;
+      // 準備ができる前にリプレイが渡されていたら、ここで再生する
+      if (replayRef.current) playRef.current(replayRef.current);
     });
     return () => {
       cancelled = true;
@@ -138,6 +144,8 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
     if (skipToEnd) while (!ep.done) ep.advance();
     viewer.setEpisodes(ep);
   };
+
+  playRef.current = play;
 
   // 外からリプレイが渡されたら再生する
   useEffect(() => {

@@ -176,7 +176,8 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
     initRapier().then((R) => {
       if (cancelled) return;
       rapierRef.current = R;
-      resetReplay(task);
+      // 準備ができる前にリプレイが渡されていたら、そちらを先に再生する
+      if (!replay.current?.once) resetReplay(task);
       playNext();
     });
     return () => {
