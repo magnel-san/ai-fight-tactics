@@ -1,23 +1,27 @@
-// 物理プレビュー(P1の確認用)。サンプルキャラを床に落とし、関節を周期的に動かして表示する。
+// 試運転(P1の確認用)。キャラを床に落とし、関節を周期的に動かして表示する。
 // 物理は固定ステップ(1/60秒)で進め、描画のフレームレートとは切り離す。
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CREATURE, PHYSICS } from '../core/config';
 import { jointStates, setJointTargets, spawnCreature, type Creature } from '../core/creature/assemble';
-import { centerOfMass, jointCount, totalCost } from '../core/creature/blueprint';
-import { QUADRUPED } from '../core/creature/samples';
+import { blockPositions, centerOfMass, jointCount, totalCost, type Blueprint } from '../core/creature/blueprint';
 import { sin } from '../core/math/fmath';
 import { initRapier } from '../core/physics/rapier';
 import { buildCreatureMesh, syncCreatureMesh } from '../render/creatureMesh';
 
-const BLUEPRINT = QUADRUPED;
-/** 歩行っぽく見せるための仮の周期 [s]。脳ができたら置き換える */
+/** 関節を動かす仮の周期 [s]。脳ができたら置き換える */
 const GAIT_PERIOD = 1.0;
-/** 対角の脚を同じ位相で動かす(関節の並びは 左前・右前・左後・右後。正面 +z を向いたとき +x が左) */
-const GAIT_PHASE = [0, Math.PI, Math.PI, 0];
+/** 関節を動かす仮の振幅(-1〜1 の目標角度) */
+const GAIT_AMPLITUDE = 0.6;
 
-export function PhysicsPreview() {
+/** 関節ごとに位相をずらす(4本脚なら左前・右前・左後・右後が 0, π/2, π, 3π/2) */
+function gaitPhase(i: number, n: number): number {
+  return (2 * Math.PI * i) / n;
+}
+
+export function PhysicsPreview({ blueprint }: { blueprint: Blueprint }) {
+  const BLUEPRINT = blueprint;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const movingRef = useRef(true);
   const resetRef = useRef<() => void>(() => {});
@@ -71,7 +75,10 @@ export function PhysicsPreview() {
         world = new R.World({ x: 0, y: PHYSICS.gravity, z: 0 });
         world.timestep = PHYSICS.dt;
         world.createCollider(R.ColliderDesc.cuboid(10, 0.1, 10).setTranslation(0, -0.1, 0));
-        creature = spawnCreature(R, world, BLUEPRINT, { position: { x: 0, y: 0.8, z: 0 }, yaw: 0 });
+        // 最も低いブロックの底面が床から少し浮く高さに置く
+        const minY = Math.min(...blockPositions(BLUEPRINT).map((p) => p[1]));
+        const y = (-minY + 0.5) * CREATURE.blockSize + 0.2;
+        creature = spawnCreature(R, world, BLUEPRINT, { position: { x: 0, y, z: 0 }, yaw: 0 });
         mesh = buildCreatureMesh(creature);
         scene.add(mesh.root);
         step = 0;
@@ -97,9 +104,10 @@ export function PhysicsPreview() {
           if (step % PHYSICS.brainInterval === 0) {
             const t = step * PHYSICS.dt;
             const w = (2 * Math.PI) / GAIT_PERIOD;
+            const n = creature.joints.length;
             setJointTargets(
               creature,
-              GAIT_PHASE.map((p) => (movingRef.current ? 0.6 * sin(w * t + p) : 0)),
+              creature.joints.map((_, i) => (movingRef.current ? GAIT_AMPLITUDE * sin(w * t + gaitPhase(i, n)) : 0)),
             );
           }
           world.step();
@@ -128,17 +136,17 @@ export function PhysicsPreview() {
       disposed = true;
       cleanup();
     };
+    // 試運転画面は開くたびに作り直すので、設計図は開いた時点のものを使う
   }, []);
 
   const com = centerOfMass(BLUEPRINT);
   return (
     <section>
-      <h2>物理プレビュー(サンプル:4本脚)</h2>
       <p>
         コスト {totalCost(BLUEPRINT)} / {CREATURE.maxCost}・関節 {jointCount(BLUEPRINT)} / {CREATURE.maxJoints}・重心(コア基準){' '}
         {com.map((v) => v.toFixed(2)).join(', ')} m
       </p>
-      <canvas ref={canvasRef} style={{ width: '100%', height: 420, display: 'block', borderRadius: 8 }} />
+      <canvas ref={canvasRef} className="preview-canvas" />
       <p>
         <button
           onClick={() => {

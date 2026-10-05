@@ -1,0 +1,133 @@
+// 設計図の編集操作(キャラクリエイト画面から使う)。
+// どの操作も元の設計図は変更せず、新しい設計図を返す。結果は必ず validate() を通る。
+import type { BlockType } from '../config';
+import { blockPositions, FACE_DIR, validate, type Axis, type Blueprint, type Face, type Vec3i } from './blueprint';
+
+export type EditResult =
+  | { ok: true; blueprint: Blueprint; /** 操作は成功したが知らせたいこと */ notes: string[] }
+  | { ok: false; errors: string[] };
+
+/** 左右対称の基準面は x = 0(コアの正面 +z を向いたとき、x が左右方向) */
+export function mirrorCell(p: Vec3i): Vec3i {
+  return [-p[0], p[1], p[2]];
+}
+
+export function mirrorFace(face: Face): Face {
+  if (face === '+x') return '-x';
+  if (face === '-x') return '+x';
+  return face;
+}
+
+/** 指定した格子座標にあるブロックのID(なければ undefined) */
+export function blockAt(bp: Blueprint, cell: Vec3i): number | undefined {
+  const i = blockPositions(bp).findIndex((p) => p[0] === cell[0] && p[1] === cell[1] && p[2] === cell[2]);
+  return i < 0 ? undefined : i;
+}
+
+/** 親ブロックの面に新しいブロックを置いたときの格子座標 */
+export function cellOnFace(bp: Blueprint, parent: number, face: Face): Vec3i {
+  const p = blockPositions(bp)[parent];
+  const d = FACE_DIR[face];
+  return [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
+}
+
+function finish(bp: Blueprint, notes: string[] = []): EditResult {
+  const errors = validate(bp);
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, blueprint: bp, notes };
+}
+
+/** ブロックを1つ追加する */
+export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis): EditResult {
+  if (type === 'core') return { ok: false, errors: ['コアは追加できません'] };
+  if (!bp.blocks[parent]) return { ok: false, errors: [`親ブロック${parent}がありません`] };
+  if (blockAt(bp, cellOnFace(bp, parent, face)) !== undefined) {
+    return { ok: false, errors: ['その位置にはすでにブロックがあります'] };
+  }
+  const id = bp.blocks.length;
+  const block = type === 'joint' ? { id, type, parent, face, axis: axis ?? 'x' } : { id, type, parent, face };
+  return finish({ blocks: [...bp.blocks, block] });
+}
+
+/**
+ * 左右対称モードでの追加。反対側の対応する位置にも同じブロックを置く。
+ * 置く位置が対称面上にある場合や、反対側に親がない・埋まっている場合は、片側だけに置いて notes で知らせる。
+ */
+export function addBlockSymmetric(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis): EditResult {
+  const first = addBlock(bp, parent, face, type, axis);
+  if (!first.ok) return first;
+
+  const target = cellOnFace(bp, parent, face);
+  const mirrored = mirrorCell(target);
+  if (mirrored[0] === target[0]) return first;
+
+  const mirrorParent = blockAt(first.blueprint, mirrorCell(blockPositions(bp)[parent]));
+  if (mirrorParent === undefined) {
+    return { ...first, notes: ['反対側に対応するブロックがないため、片側だけに置きました'] };
+  }
+  if (blockAt(first.blueprint, mirrored) !== undefined) {
+    return { ...first, notes: ['反対側の位置が埋まっているため、片側だけに置きました'] };
+  }
+  const second = addBlock(first.blueprint, mirrorParent, mirrorFace(face), type, axis);
+  if (!second.ok) return { ok: false, errors: second.errors.map((e) => `左右対称に置けません:${e}`) };
+  return second;
+}
+
+/** 指定したブロックと、その先につながるすべてのブロックのID */
+export function subtreeOf(bp: Blueprint, id: number): Set<number> {
+  const result = new Set<number>([id]);
+  // 親は必ず自分より小さいIDなので、ID順に1回なめるだけで子孫がそろう
+  for (const b of bp.blocks) if (b.parent !== null && result.has(b.parent)) result.add(b.id);
+  return result;
+}
+
+/** 複数のブロックを、その先も含めて削除する。残ったブロックはID順を保ったまま詰め直す */
+export function removeBlocks(bp: Blueprint, ids: number[]): EditResult {
+  if (ids.includes(0)) return { ok: false, errors: ['コアは削除できません'] };
+  const removed = new Set<number>();
+  for (const id of ids) {
+    if (!bp.blocks[id]) return { ok: false, errors: [`ブロック${id}がありません`] };
+    for (const r of subtreeOf(bp, id)) removed.add(r);
+  }
+  const newId = new Map<number, number>();
+  const blocks = bp.blocks
+    .filter((b) => !removed.has(b.id))
+    .map((b, i) => {
+      newId.set(b.id, i);
+      return { ...b, id: i, parent: b.parent === null ? null : newId.get(b.parent)! };
+    });
+  return finish({ blocks });
+}
+
+export function removeBlock(bp: Blueprint, id: number): EditResult {
+  return removeBlocks(bp, [id]);
+}
+
+/** 左右対称モードでの削除。反対側の同じ位置にあるブロックも削除する */
+export function removeBlockSymmetric(bp: Blueprint, id: number): EditResult {
+  const pos = blockPositions(bp)[id];
+  if (!pos) return { ok: false, errors: [`ブロック${id}がありません`] };
+  const mirror = blockAt(bp, mirrorCell(pos));
+  if (mirror === undefined || mirror === id || mirror === 0) return removeBlock(bp, id);
+  return removeBlocks(bp, [id, mirror]);
+}
+
+/** 関節の回転軸を変更する */
+export function setJointAxis(bp: Blueprint, id: number, axis: Axis): EditResult {
+  const b = bp.blocks[id];
+  if (!b || b.type !== 'joint') return { ok: false, errors: ['関節ブロックではありません'] };
+  return finish({ blocks: bp.blocks.map((x) => (x.id === id ? { ...x, axis } : x)) });
+}
+
+/** 左右対称モードでの回転軸の変更。反対側の同じ位置にある関節も同じ軸にする */
+export function setJointAxisSymmetric(bp: Blueprint, id: number, axis: Axis): EditResult {
+  const first = setJointAxis(bp, id, axis);
+  if (!first.ok) return first;
+  const mirror = blockAt(bp, mirrorCell(blockPositions(bp)[id]));
+  if (mirror === undefined || mirror === id || bp.blocks[mirror].type !== 'joint') return first;
+  return setJointAxis(first.blueprint, mirror, axis);
+}
+
+/** コアだけの設計図 */
+export function emptyBlueprint(): Blueprint {
+  return { blocks: [{ id: 0, type: 'core', parent: null }] };
+}

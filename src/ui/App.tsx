@@ -1,38 +1,42 @@
-// 仮のトップ画面。決定性の確認と、物理プレビューを表示する。
-// Node(npm test)で記録したハッシュと、このブラウザで計算したハッシュが一致するかを表示する。
-import { useEffect, useState } from 'react';
-import { initRapier } from '../core/physics/rapier';
-import { runSmokeSim } from '../core/sim/smoke';
+// トップ画面。今はキャラクリエイトと試運転の2つを切り替える。
+import { useState } from 'react';
+import type { Blueprint } from '../core/creature/blueprint';
+import { QUADRUPED } from '../core/creature/samples';
+import { CreateScene } from '../scenes/create/CreateScene';
+import { DeterminismCheck } from './DeterminismCheck';
 import { PhysicsPreview } from './PhysicsPreview';
 
-/** tests/__snapshots__/determinism.test.ts.snap に記録された seed=1 のハッシュ */
-const EXPECTED_SEED1 = 'b95852cb';
+type Tab = 'create' | 'test';
 
 export function App() {
-  const [hash, setHash] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('create');
+  const [blueprint, setBlueprint] = useState<Blueprint>(QUADRUPED);
 
-  useEffect(() => {
-    initRapier()
-      .then((R) => setHash(runSmokeSim(R, 1)))
-      .catch((e: unknown) => setError(String(e)));
-  }, []);
-
-  const ok = hash === EXPECTED_SEED1;
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', padding: 24, lineHeight: 1.7 }}>
-      <h1>AI Fight Tactics</h1>
-      <h2>物理の決定性チェック</h2>
-      {error && <p style={{ color: 'crimson' }}>エラー: {error}</p>}
-      {!hash && !error && <p>計算中…</p>}
-      {hash && (
-        <p>
-          このブラウザ: <code>{hash}</code> / Node: <code>{EXPECTED_SEED1}</code>{' '}
-          <strong style={{ color: ok ? 'green' : 'crimson' }}>{ok ? '一致' : '不一致'}</strong>
-        </p>
-      )}
-      <p style={{ color: '#666' }}>{navigator.userAgent}</p>
-      <PhysicsPreview />
-    </main>
+    <div className="app">
+      <header className="topbar">
+        <h1>AI Fight Tactics</h1>
+        <nav>
+          <button className={tab === 'create' ? 'selected' : ''} onClick={() => setTab('create')}>
+            キャラクリエイト
+          </button>
+          <button className={tab === 'test' ? 'selected' : ''} onClick={() => setTab('test')}>
+            試運転
+          </button>
+        </nav>
+        <DeterminismCheck />
+      </header>
+      <main className="content">
+        {/* 試運転から戻っても取り消し履歴やカメラが残るよう、キャラクリエイトは隠すだけにする */}
+        <div className="tab-page" hidden={tab !== 'create'}>
+          <CreateScene blueprint={blueprint} onChange={setBlueprint} active={tab === 'create'} />
+        </div>
+        {tab === 'test' && (
+          <div className="test">
+            <PhysicsPreview blueprint={blueprint} />
+          </div>
+        )}
+      </main>
+    </div>
   );
 }

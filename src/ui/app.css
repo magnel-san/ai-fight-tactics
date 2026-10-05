@@ -1,0 +1,253 @@
+:root {
+  --bg: #12161f;
+  --panel: #1a202b;
+  --panel-2: #232a37;
+  --line: #2f3747;
+  --text: #e6e9ef;
+  --muted: #8a93a5;
+  --accent: #56ccf2;
+  --danger: #ff6b6b;
+  --ok: #6fcf97;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+  font-size: 14px;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+button.selected {
+  border-color: var(--accent);
+  background: #1f3a4a;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.topbar h1 {
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+.topbar nav {
+  display: flex;
+  gap: 6px;
+}
+
+.determinism {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.determinism.ok {
+  color: var(--ok);
+}
+.determinism.ng {
+  color: var(--danger);
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+}
+
+/* キャラクリエイト */
+.create {
+  display: flex;
+  height: 100%;
+}
+
+.panel {
+  width: 280px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.panel h2 {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 12px 0 8px;
+  font-weight: 600;
+}
+.panel h3 {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+
+.palette {
+  display: grid;
+  gap: 6px;
+}
+.block-button {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+.block-button .swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+.block-button .cost {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+.segmented button {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 4px;
+  cursor: pointer;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.stats dt {
+  color: var(--muted);
+}
+.stats dd {
+  margin: 0;
+}
+.stats dd.over {
+  color: var(--danger);
+}
+.stats meter {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin-top: 2px;
+}
+.mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+.message {
+  margin: 10px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #1f3a4a;
+}
+.message.error {
+  background: #4a1f24;
+  color: #ffd0d0;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.row button {
+  flex: 1;
+}
+
+.help {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.hud {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* 試運転 */
+.test {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.preview-canvas {
+  display: block;
+  width: 100%;
+  height: 480px;
+  border-radius: 8px;
+}
+
+.tab-page {
+  height: 100%;
+}
+.tab-page[hidden] {
+  display: none;
+}
