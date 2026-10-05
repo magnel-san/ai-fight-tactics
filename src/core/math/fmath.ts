@@ -164,3 +164,48 @@ export function cos(x: number): number {
       return sinKernel(r);
   }
 }
+
+const PI_HALF = 1.5707963267948966;
+const PI_SIXTH = 0.52359877559829887;
+const SQRT3 = 1.7320508075688772;
+const TAN_PI_12 = 0.26794919243112270;
+const ATAN_COEF = (() => {
+  // (-1)^n / (2n+1) の表
+  const t: number[] = [];
+  for (let n = 0; n <= 13; n++) t.push((n % 2 === 0 ? 1 : -1) / (2 * n + 1));
+  return t;
+})();
+
+export function atan(x: number): number {
+  if (x !== x) return NaN;
+  const neg = x < 0;
+  let t = neg ? -x : x;
+  let base = 0;
+  let invert = false;
+  if (t > 1) {
+    // atan(t) = π/2 - atan(1/t)
+    t = 1 / t;
+    invert = true;
+  }
+  if (t > TAN_PI_12) {
+    // atan(t) = π/6 + atan((√3 t - 1) / (t + √3))
+    t = (SQRT3 * t - 1) / (t + SQRT3);
+    base = PI_SIXTH;
+  }
+  // |t| <= tan(π/12) ≈ 0.268 でテイラー展開
+  const t2 = t * t;
+  let p = ATAN_COEF[13];
+  for (let n = 12; n >= 0; n--) p = p * t2 + ATAN_COEF[n];
+  let r = base + t * p;
+  if (invert) r = PI_HALF - r;
+  return neg ? -r : r;
+}
+
+export function atan2(y: number, x: number): number {
+  if (x !== x || y !== y) return NaN;
+  if (x > 0) return atan(y / x);
+  if (x < 0) return y >= 0 ? atan(y / x) + 2 * PI_HALF : atan(y / x) - 2 * PI_HALF;
+  if (y > 0) return PI_HALF;
+  if (y < 0) return -PI_HALF;
+  return 0;
+}

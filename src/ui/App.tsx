@@ -1,8 +1,9 @@
-// 仮のトップ画面。今は決定性の確認だけを行う。
+// 仮のトップ画面。決定性の確認と、物理プレビューを表示する。
 // Node(npm test)で記録したハッシュと、このブラウザで計算したハッシュが一致するかを表示する。
 import { useEffect, useState } from 'react';
 import { initRapier } from '../core/physics/rapier';
 import { runSmokeSim } from '../core/sim/smoke';
+import { PhysicsPreview } from './PhysicsPreview';
 
 /** tests/__snapshots__/determinism.test.ts.snap に記録された seed=1 のハッシュ */
 const EXPECTED_SEED1 = 'b95852cb';
@@ -31,6 +32,7 @@ export function App() {
         </p>
       )}
       <p style={{ color: '#666' }}>{navigator.userAgent}</p>
+      <PhysicsPreview />
     </main>
   );
 }

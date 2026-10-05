@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cos, exp, log, sin, tanh } from '../src/core/math/fmath';
+import { atan, atan2, cos, exp, log, sin, tanh } from '../src/core/math/fmath';
 import { Rng } from '../src/core/math/rng';
 
 // 自前実装がネイティブ実装に十分近いことを確認する(一致までは求めない)
@@ -47,5 +47,26 @@ describe('fmath', () => {
   it('既知の出力とビット単位で一致する(実装が変わったら検知する)', () => {
     const xs = [-3.7, -0.5, 0.001, 0.3, 1, 2.5, 10];
     expect(xs.map((x) => [exp(x), log(Math.abs(x)), tanh(x), sin(x), cos(x)])).toMatchSnapshot();
+  });
+});
+
+describe('fmath atan / atan2', () => {
+  const rng = new Rng(77);
+
+  it('atan', () => {
+    for (let i = 0; i < 20000; i++) {
+      const x = rng.range(-1000, 1000) * (i % 2 ? 1 : 0.001);
+      expect(Math.abs(atan(x) - Math.atan(x))).toBeLessThan(1e-14);
+    }
+  });
+
+  it('atan2(全象限と軸上)', () => {
+    for (let i = 0; i < 20000; i++) {
+      const y = rng.range(-10, 10);
+      const x = rng.range(-10, 10);
+      expect(Math.abs(atan2(y, x) - Math.atan2(y, x))).toBeLessThan(1e-14);
+    }
+    const axes: [number, number][] = [[0, 1], [1, 0], [0, -1], [-1, 0], [0, 0]];
+    for (const [y, x] of axes) expect(atan2(y, x)).toBeCloseTo(Math.atan2(y, x), 14);
   });
 });

@@ -1,7 +1,9 @@
 // 決定性の確認用シナリオ。シードから決めた位置・回転で箱を床に落とし、
 // 関節モーターも動かして、一定ステップ後の全剛体の状態をハッシュにする。
 // 本物の試合ループができるまで、Node とブラウザ間の一致確認に使う。
-import { CREATURE, PHYSICS } from '../config';
+// 調整パラメータを変えても基準のハッシュが変わらないよう、モーターの値はここに固定する。
+const MOTOR = { limit: Math.PI / 2, stiffness: 50, damping: 5 };
+import { PHYSICS } from '../config';
 import { cos, sin } from '../math/fmath';
 import { Rng } from '../math/rng';
 import type { Rapier } from '../physics/rapier';
@@ -39,9 +41,9 @@ export function runSmokeSim(R: Rapier, seed: number, steps = 600): string {
   for (let step = 0; step < steps; step++) {
     if (step % PHYSICS.brainInterval === 0) {
       joint.configureMotorPosition(
-        rng.range(-1, 1) * CREATURE.jointLimit,
-        CREATURE.jointStiffness,
-        CREATURE.jointDamping,
+        rng.range(-1, 1) * MOTOR.limit,
+        MOTOR.stiffness,
+        MOTOR.damping,
       );
     }
     world.step();

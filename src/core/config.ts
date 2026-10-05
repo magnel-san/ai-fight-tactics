@@ -12,9 +12,19 @@ export const CREATURE = {
   blockSize: 0.4,
   /** 関節の可動範囲 [rad](±90°) */
   jointLimit: Math.PI / 2,
-  /** 関節モーター(角度制御)のばね定数と減衰。トルク上限の扱いは関節実装時に決める */
-  jointStiffness: 50,
-  jointDamping: 5,
+  /**
+   * 関節モーター(角度制御、Rapier の ForceBased モデル)のばね定数 [N·m/rad] と減衰 [N·m·s/rad]。
+   * 弱すぎると、足が床に摩擦で固定されたときに押し負けて関節が動かなくなる
+   */
+  jointStiffness: 1000,
+  jointDamping: 40,
+  /** 関節モーターのトルク上限 [N·m]。高速回転のような挙動を防ぐ */
+  jointMaxTorque: 50,
+  /**
+   * コライダーを各辺この長さだけ小さくする [m]。
+   * 隣り合う別剛体のブロック同士が常に接触して震えるのを防ぐ
+   */
+  colliderShrink: 0.01,
 } as const;
 
 export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'grip';
