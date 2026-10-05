@@ -8,19 +8,21 @@ import { pushOpponents } from '../data/bots';
 import { BattleScene, type BattleRecord, type OpponentEntry } from '../scenes/battle/BattleScene';
 import { CreateScene } from '../scenes/create/CreateScene';
 import { LibraryScene } from '../scenes/library/LibraryScene';
+import { OnlineScene } from '../scenes/online/OnlineScene';
 import { TrainScene, type TrainReplay } from '../scenes/train/TrainScene';
-import { newId, saveReplay, type StoredReplay } from '../storage/db';
+import { newId, saveCharacter, saveReplay, type StoredReplay } from '../storage/db';
 import type { Opponent } from '../training/Trainer';
 import { DeterminismCheck } from './DeterminismCheck';
 import { useCharacterStore } from './useCharacterStore';
 
-type Tab = 'create' | 'train' | 'battle' | 'library';
+type Tab = 'create' | 'train' | 'battle' | 'library' | 'online';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'create', label: 'キャラクリエイト' },
   { id: 'train', label: 'トレーニング' },
   { id: 'battle', label: 'バトル' },
   { id: 'library', label: 'マイキャラ' },
+  { id: 'online', label: 'オンライン' },
 ];
 
 const BOTS = pushOpponents();
@@ -173,6 +175,22 @@ export function App() {
                   setPreferredOpponent(id);
                   setTab('battle');
                 }}
+              />
+            </div>
+            <div className="tab-page scroll" hidden={tab !== 'online'}>
+              <OnlineScene
+                charId={store.activeId}
+                character={character}
+                active={tab === 'online'}
+                onBattle={async (c) => {
+                  // オンラインで見つけた相手は「受け取ったキャラ」として保存して対戦する
+                  const id = newId();
+                  await saveCharacter(id, { ...c, readOnly: true }, 'received');
+                  await store.refresh();
+                  setPreferredOpponent(id);
+                  setTab('battle');
+                }}
+                onAddToPool={(c) => void store.addPool(c.name, c)}
               />
             </div>
           </>

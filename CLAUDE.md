@@ -8,6 +8,8 @@
 - npm run dev   開発サーバー
 - npm test      単体テストと決定性テスト
 - npm run build 本番ビルド
+- npm run test:browsers  Chromium・Firefox・WebKit での決定性テスト(Playwright)
+- npx tsx scripts/train.ts …  画面なしでトレーニング(標準BOTの作成は bots/make-standard-bot.sh)
 
 ## 絶対に守ること
 - src/core/ では three、DOM、Math.random、Math.sin/exp/tanh を使わない(core/math/ の関数を使う)
