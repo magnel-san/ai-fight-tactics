@@ -1,0 +1,23 @@
+# 単体テスト・型チェック・ビルドと、ブラウザ間の決定性テスト(Chromium・Firefox・WebKit)
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:browsers
+        env:
+          CI: true

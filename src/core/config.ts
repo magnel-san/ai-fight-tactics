@@ -97,6 +97,8 @@ export const CHASE_TASK = {
   timeLimit: 15,
   /** 一致度の計算で、これより遅い動きは速さをこの値とみなす(止まっていると一致度が上がらない) [m/s] */
   alignMinSpeed: 0.1,
+  /** 移動方向を測る時間 [s]。歩くと体が左右に揺れるので、瞬間の速度ではなくこの時間の変位で測る */
+  alignWindow: 1,
   /** 一致度の計測を始めるまでの時間 [s](動き出すまでの猶予) */
   warmup: 1,
   /** 報酬で一致度にかける重み [/s] */
@@ -219,5 +221,5 @@ export const TRAINING = {
   workersMin: 2,
   workersMax: 8,
   /** σ の下限(小さくなりすぎて進化が止まるのを防ぐ) */
-  sigmaMin: 0.005,
+  sigmaMin: 0.02,
 } as const;

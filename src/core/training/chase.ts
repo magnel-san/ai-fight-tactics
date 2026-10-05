@@ -19,6 +19,8 @@ export class ChaseEpisode extends EpisodeBase {
   private prevDist: number;
   private alignSum = 0;
   private alignCount = 0;
+  /** 直近の位置と指令方向(単位ベクトル)の記録。移動方向は一定時間の変位で測る */
+  private trail: { x: number; z: number; cx: number; cz: number }[] = [];
 
   constructor(R: Rapier, bp: Blueprint, motorGenome: Float64Array, seed: number, sector: Sector = { index: 0, count: 1 }) {
     super(R);
@@ -60,20 +62,33 @@ export class ChaseEpisode extends EpisodeBase {
     target.z += sin(this.heading) * CHASE_TASK.targetSpeed * BRAIN_DT;
 
     const p = f.position();
-    const dx = target.x - p.x;
-    const dz = target.z - p.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
+    const tx = target.x - p.x;
+    const tz = target.z - p.z;
+    const dist = Math.sqrt(tx * tx + tz * tz);
     this.reward += this.prevDist - dist;
     this.prevDist = dist;
 
-    // 一致度:前回の指令方向と、実際の水平速度の向きの内積(遅いときは小さくなる)
-    if (t >= CHASE_TASK.warmup) {
-      const c = f.command;
-      const cl = Math.sqrt(c.dirX * c.dirX + c.dirZ * c.dirZ);
-      const v = f.core.linvel();
-      const speed = Math.sqrt(v.x * v.x + v.z * v.z);
-      if (cl > 1e-9) {
-        const a = (c.dirX * v.x + c.dirZ * v.z) / cl / Math.max(speed, CHASE_TASK.alignMinSpeed);
+    // 一致度:直近の一定時間の指令方向の平均と、同じ時間の変位(実際の移動方向)の内積。
+    // 歩くと体は左右に揺れるので、瞬間の速度ではなく一定時間の変位で移動方向を測る。遅いときは小さくなる
+    const c = f.command;
+    const cl = Math.sqrt(c.dirX * c.dirX + c.dirZ * c.dirZ);
+    this.trail.push({ x: p.x, z: p.z, cx: cl > 1e-9 ? c.dirX / cl : 0, cz: cl > 1e-9 ? c.dirZ / cl : 0 });
+    const window = Math.round(CHASE_TASK.alignWindow / BRAIN_DT);
+    if (this.trail.length > window + 1) this.trail.shift();
+    if (t >= CHASE_TASK.warmup && this.trail.length === window + 1) {
+      const first = this.trail[0];
+      const dx = p.x - first.x;
+      const dz = p.z - first.z;
+      let ax = 0;
+      let az = 0;
+      for (let i = 0; i < window; i++) {
+        ax += this.trail[i].cx;
+        az += this.trail[i].cz;
+      }
+      const al = Math.sqrt(ax * ax + az * az);
+      const moved = Math.sqrt(dx * dx + dz * dz);
+      if (al > 1e-9) {
+        const a = (ax * dx + az * dz) / al / Math.max(moved, CHASE_TASK.alignMinSpeed * CHASE_TASK.alignWindow);
         const align = Math.max(-1, Math.min(1, a));
         this.alignSum += align;
         this.alignCount++;
@@ -88,7 +103,7 @@ export class ChaseEpisode extends EpisodeBase {
       return;
     }
 
-    f.command = { dirX: dx, dirZ: dz, speed: 1 };
+    f.command = { dirX: tx, dirZ: tz, speed: 1 };
     f.drive(t);
   }
 }
