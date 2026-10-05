@@ -1,8 +1,11 @@
 // 崩落していく六角タイルのステージ(仕様書セクション6)。
-// タイルの状態は「安全 → 危険マーク(2秒) → 崩落」。崩落したタイルはコライダーを取り除く。
+// タイルの状態は「安全 → 危険マーク(2秒) → 崩落」。
+// 物理では、残っているタイルの上面と穴の縁の壁を1つの三角形メッシュにまとめる(タイルが崩れたら作り直す)。
+// タイルごとに別のコライダーにすると、境目の辺に体が引っかかる(ゴースト衝突)ため、
+// 頂点を共有した1枚のメッシュにして Rapier の FIX_INTERNAL_EDGES で境目を滑らかにしている。
 // 3つの崩落ルールはすべてステージのシードから決まる。
 //   A:安全円の収縮  B:滞在による崩落  C:ランダム崩落
-import type { Collider, World } from '@dimforge/rapier3d-compat';
+import type { Collider, RigidBody, World } from '@dimforge/rapier3d-compat';
 import { STAGE } from '../config';
 import { cos, sin } from '../math/fmath';
 import { Rng } from '../math/rng';
@@ -21,7 +24,6 @@ export interface Tile extends Hex {
   stay: number;
   /** 崩落した時刻 [s](描画で落ちていく演出に使う) */
   collapsedAt: number;
-  collider: Collider | null;
 }
 
 export interface StageOptions {
@@ -47,9 +49,13 @@ export class Stage {
   private rng: Rng;
   private pace: number;
   private nextRandomAt: number;
+  private body: RigidBody;
+  private collider: Collider | null = null;
+  /** タイルが崩れて、物理のメッシュを作り直す必要がある */
+  private dirty = false;
 
   constructor(
-    R: Rapier,
+    private R: Rapier,
     private world: World,
     seed: number,
     private opts: StageOptions,
@@ -59,20 +65,15 @@ export class Stage {
 
     const span = 2 * STAGE.radius + 1;
     this.index = new Int16Array(span * span).fill(-1);
-    const body = world.createRigidBody(R.RigidBodyDesc.fixed());
+    this.body = world.createRigidBody(R.RigidBodyDesc.fixed());
     const holes = new Set((opts.holes ?? []).map(hexKey));
-    const shape = hexPrismPoints(this.size, STAGE.tileHeight);
     for (const h of hexesWithin(STAGE.radius)) {
       const { x, z } = hexToWorld(h, this.size);
       const hole = holes.has(hexKey(h));
-      let collider: Collider | null = null;
-      if (!hole) {
-        const desc = R.ColliderDesc.convexHull(shape)!.setTranslation(x, 0, z).setFriction(STAGE.tileFriction);
-        collider = world.createCollider(desc, body);
-      }
       this.index[this.slot(h.q, h.r)] = this.tiles.length;
-      this.tiles.push({ ...h, x, z, state: hole ? 'collapsed' : 'safe', warnTime: 0, stay: 0, collapsedAt: hole ? -Infinity : 0, collider });
+      this.tiles.push({ ...h, x, z, state: hole ? 'collapsed' : 'safe', warnTime: 0, stay: 0, collapsedAt: hole ? -Infinity : 0 });
     }
+    this.rebuildCollider();
 
     // ルールA:最終地点は中心から一定距離以内のタイルからランダムに選ぶ
     const candidates = hexesWithin(STAGE.finalPointMaxDist);
@@ -137,6 +138,20 @@ export class Stage {
       t.warnTime += dt;
       if (t.warnTime >= STAGE.warningTime) this.collapse(t);
     }
+    if (this.dirty) this.rebuildCollider();
+  }
+
+  /** 残っているタイルから、物理の三角形メッシュを作り直す */
+  private rebuildCollider(): void {
+    this.dirty = false;
+    if (this.collider) {
+      this.world.removeCollider(this.collider, false);
+      this.collider = null;
+    }
+    const mesh = buildStageMesh(this.tiles, this.size, STAGE.tileHeight, (x, z) => !this.isHole(x, z));
+    if (mesh.indices.length === 0) return;
+    const desc = this.R.ColliderDesc.trimesh(mesh.vertices, mesh.indices, this.R.TriMeshFlags.FIX_INTERNAL_EDGES).setFriction(STAGE.tileFriction);
+    this.collider = this.world.createCollider(desc, this.body);
   }
 
   private warn(t: Tile): void {
@@ -148,10 +163,7 @@ export class Stage {
   private collapse(t: Tile): void {
     t.state = 'collapsed';
     t.collapsedAt = this.time;
-    if (t.collider) {
-      this.world.removeCollider(t.collider, false);
-      t.collider = null;
-    }
+    this.dirty = true;
   }
 
   /** ルールA:開始から一定時間後、一定間隔で安全半径が1ずつ縮み、円の外のタイルに危険マークがつく */
@@ -202,14 +214,52 @@ export function randomInterval(clock: number): number {
   return a + (b - a) * Math.min(1, Math.max(0, t));
 }
 
-/** 六角柱の頂点(上面が y = 0)。とがった頂点が ±z を向く */
-function hexPrismPoints(size: number, height: number): Float32Array {
-  const pts: number[] = [];
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i + Math.PI / 6;
-    const x = size * cos(a);
-    const z = size * sin(a);
-    pts.push(x, 0, z, x, -height, z);
+/**
+ * 残っているタイルの上面(y = 0)と、穴やステージの外に面した縁の壁(高さ height)の三角形メッシュ。
+ * 隣り合うタイルの角は同じ頂点を共有させる(内部の辺として扱われ、引っかかりがなくなる)。
+ * 三角形は外側(上面は +y、壁は穴の側)を向くように並べる
+ */
+export function buildStageMesh(
+  tiles: readonly Tile[],
+  size: number,
+  height: number,
+  solid: (x: number, z: number) => boolean,
+): { vertices: Float32Array; indices: Uint32Array } {
+  const vertices: number[] = [];
+  const indices: number[] = [];
+  const welded = new Map<string, number>();
+  // 角の位置は丸めたキーで同じ頂点にまとめる(タイルごとの計算の誤差を吸収する)
+  const vertex = (x: number, y: number, z: number): number => {
+    const key = `${Math.round(x * 1e4)},${Math.round(y * 1e4)},${Math.round(z * 1e4)}`;
+    let i = welded.get(key);
+    if (i === undefined) {
+      i = vertices.length / 3;
+      vertices.push(x, y, z);
+      welded.set(key, i);
+    }
+    return i;
+  };
+  // 角の方向(とがった頂点が ±z を向く:30°, 90°, …)
+  const corners = Array.from({ length: 6 }, (_, k) => {
+    const a = (Math.PI / 3) * k + Math.PI / 6;
+    return { x: size * cos(a), z: size * sin(a) };
+  });
+  for (const t of tiles) {
+    if (t.state === 'collapsed') continue;
+    const c = vertex(t.x, 0, t.z);
+    const top = corners.map((o) => vertex(t.x + o.x, 0, t.z + o.z));
+    for (let k = 0; k < 6; k++) {
+      const k1 = (k + 1) % 6;
+      // 上面(+y を向く並び)
+      indices.push(c, top[k1], top[k]);
+      // 隣が穴なら、その辺に壁を立てる
+      const mx = t.x + ((corners[k].x + corners[k1].x) / 2) * 1.2;
+      const mz = t.z + ((corners[k].z + corners[k1].z) / 2) * 1.2;
+      if (solid(mx, mz)) continue;
+      const b0 = vertex(t.x + corners[k].x, -height, t.z + corners[k].z);
+      const b1 = vertex(t.x + corners[k1].x, -height, t.z + corners[k1].z);
+      indices.push(top[k], top[k1], b1, top[k], b1, b0);
+    }
   }
-  return new Float32Array(pts);
+  return { vertices: new Float32Array(vertices), indices: new Uint32Array(indices) };
 }

@@ -8,7 +8,7 @@ import { initRapier, type Rapier } from '../src/core/physics/rapier';
 import { Fighter } from '../src/core/sim/fighter';
 import { MatchEpisode } from '../src/core/sim/match';
 import { hexDistance, hexesWithin, hexToWorld, rotateHex, worldToHex } from '../src/core/stage/hex';
-import { randomInterval, Stage } from '../src/core/stage/stage';
+import { buildStageMesh, randomInterval, Stage } from '../src/core/stage/stage';
 
 describe('六角グリッド', () => {
   it('半径6のステージは127枚', () => {
@@ -38,6 +38,48 @@ describe('六角グリッド', () => {
     const h = { q: 3, r: -1 };
     expect(rotateHex(h, 6)).toEqual(h);
     for (let k = 0; k < 6; k++) expect(hexDistance(rotateHex(h, k), { q: 0, r: 0 })).toBe(3);
+  });
+});
+
+describe('ステージの物理メッシュ', () => {
+  const tilesOf = (holes: { q: number; r: number }[] = []) =>
+    hexesWithin(6).map((h) => {
+      const { x, z } = hexToWorld(h, 0.6);
+      const hole = holes.some((o) => o.q === h.q && o.r === h.r);
+      return { ...h, x, z, state: (hole ? 'collapsed' : 'safe') as 'safe' | 'collapsed', warnTime: 0, stay: 0, collapsedAt: 0 };
+    });
+  const solidOf = (tiles: ReturnType<typeof tilesOf>) => (x: number, z: number) => {
+    const h = worldToHex(x, z, 0.6);
+    const t = tiles.find((o) => o.q === h.q && o.r === h.r);
+    return !!t && t.state !== 'collapsed';
+  };
+
+  it('上面は1枚6三角形、壁は外周の辺だけ(半径6なら78辺)', () => {
+    const tiles = tilesOf();
+    const m = buildStageMesh(tiles, 0.6, 0.4, solidOf(tiles));
+    expect(m.indices.length / 3).toBe(127 * 6 + 78 * 2);
+    // 隣り合うタイルの角は頂点を共有する(中心127 + 角の頂点 + 壁の下端)
+    const corners = new Set<string>();
+    for (const t of tiles) for (let k = 0; k < 6; k++) {
+      const a = (Math.PI / 3) * k + Math.PI / 6;
+      corners.add(`${Math.round((t.x + 0.6 * Math.cos(a)) * 1e4)},${Math.round((t.z + 0.6 * Math.sin(a)) * 1e4)}`);
+    }
+    expect(m.vertices.length / 3).toBe(127 + corners.size + 78);
+  });
+
+  it('穴を1つあけると、その縁に6枚の壁ができ、上面の三角形はすべて上を向く', () => {
+    const tiles = tilesOf([{ q: 0, r: 0 }]);
+    const m = buildStageMesh(tiles, 0.6, 0.4, solidOf(tiles));
+    expect(m.indices.length / 3).toBe(126 * 6 + (78 + 6) * 2);
+    const v = (i: number) => [m.vertices[3 * i], m.vertices[3 * i + 1], m.vertices[3 * i + 2]];
+    for (let t = 0; t < m.indices.length; t += 3) {
+      const [a, b, c] = [v(m.indices[t]), v(m.indices[t + 1]), v(m.indices[t + 2])];
+      if (a[1] !== 0 || b[1] !== 0 || c[1] !== 0) continue;
+      const u = [b[0] - a[0], b[2] - a[2]];
+      const w = [c[0] - a[0], c[2] - a[2]];
+      // 法線の y 成分 = u.z * w.x - u.x * w.z
+      expect(u[1] * w[0] - u[0] * w[1]).toBeGreaterThan(0);
+    }
   });
 });
 
