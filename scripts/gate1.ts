@@ -24,21 +24,28 @@ const rng = new Rng(seed);
 const ga = new GeneticAlgorithm(createMotorGenome(jointCount(bp), rng.fork()), rng.nextU32());
 const workers = Math.min(TRAINING.workersMax, Math.max(TRAINING.workersMin, availableParallelism() - 2));
 
-/** 全周を18等分した方向で評価し、正面・横・後ろ別の到達数を返す */
+/** 全周を36等分した方向で評価し、正面・横・後ろ別の到達数を返す */
 function directionCheck(genome: Float64Array): string {
-  const n = 18;
+  const n = 36;
   const reached: boolean[] = [];
   for (let i = 0; i < n; i++) {
     const ep = new MoveEpisode(R, bp, genome, rng.nextU32(), { index: i, count: n });
     reached.push(ep.run().reached);
     ep.free();
   }
-  // index 0 が真後ろ(-180°)から始まり、9 付近が正面
-  const back = [0, 1, 2, 15, 16, 17].filter((i) => reached[i]).length;
-  const side = [3, 4, 5, 12, 13, 14].filter((i) => reached[i]).length;
-  const front = [6, 7, 8, 9, 10, 11].filter((i) => reached[i]).length;
-  return `全周18方向で ${front + side + back}/18(正面 ${front}/6・横 ${side}/6・後ろ ${back}/6)`;
+  // index i の方向は、正面から見て -180° + (i + 0.5) × 360°/n 付近
+  const group = (i: number) => {
+    const deg = Math.abs(-180 + ((i + 0.5) * 360) / n);
+    return deg < 60 ? 'front' : deg > 120 ? 'back' : 'side';
+  };
+  const count = (g: string) => reached.filter((r, i) => r && group(i) === g).length;
+  const per = n / 3;
+  const total = reached.filter(Boolean).length;
+  return `全周${n}方向で ${total}/${n}(正面 ${count('front')}/${per}・横 ${count('side')}/${per}・後ろ ${count('back')}/${per})`;
 }
+
+/** 合格しても止めずに最大世代数まで続ける(長く学習すると上達し続けるかを見る) */
+const noStop = process.env.GATE_NO_STOP === '1';
 
 console.log(`サンプル=${name} 関節=${jointCount(bp)} 個体数=${TRAINING.population} 想定Worker数=${workers}`);
 const start = performance.now();
@@ -66,11 +73,11 @@ for (let gen = 0; gen < maxGenerations; gen++) {
     const { reachedCount } = evaluateMove(R, bp, champion, confirmSeeds);
     const ok = reachedCount >= MOVE_TASK.confirmPassCount;
     console.log(`  → 合格確認 ${reachedCount}/${MOVE_TASK.confirmEpisodes} ${ok ? '合格' : '不合格'}`);
-    if (ok) {
+    if (ok && passedAt === null) {
       passedAt = gen;
       console.log(`  → 念のため:${directionCheck(champion)}`);
       if (savePath) writeFileSync(savePath, JSON.stringify({ name, gen, genome: [...champion] }));
-      break;
+      if (!noStop) break;
     }
   }
   if (gen % 25 === 24) console.log(`  → 途中経過:${directionCheck(champion)}`);
