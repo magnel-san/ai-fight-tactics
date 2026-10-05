@@ -377,5 +377,5 @@ docs/SPEC.md            この仕様書
 - 受け取ったキャラは parseCharacter で、体の検証と重みの数・値の検証を通ったものだけ使う。
 
 ### 開発フェーズ
-- 関門1の結果は `docs/gate1-report.md`。
+- 関門1の結果は `docs/gate1-report.md`、関門2の結果は `docs/gate2-report.md`。
 - オンラインはサーバーにキャラのデータだけを置き、対戦は各ブラウザで行う(`docs/ONLINE.md`)。

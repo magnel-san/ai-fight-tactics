@@ -28,7 +28,7 @@ npm run test:browsers  # Chromium・Firefox・WebKit での決定性テスト(�
 
 - 仕様:[docs/SPEC.md](docs/SPEC.md)(実装時に決めたことは付録A)
 - 開発ルール:[CLAUDE.md](CLAUDE.md)
-- 関門1の検証結果:[docs/gate1-report.md](docs/gate1-report.md)
+- 関門の検証結果:[関門1](docs/gate1-report.md)・[関門2](docs/gate2-report.md)
 - オンライン対戦の準備:[docs/ONLINE.md](docs/ONLINE.md)
 
 ### 画面なしでのトレーニング

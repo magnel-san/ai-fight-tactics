@@ -6,11 +6,12 @@ export default defineConfig({
   timeout: 180_000,
   fullyParallel: true,
   reporter: 'list',
-  use: { baseURL: 'http://localhost:4173' },
+  use: { baseURL: 'http://localhost:4317' },
   webServer: {
-    command: 'npm run build && npx vite preview --port 4173 --strictPort',
-    url: 'http://localhost:4173',
-    reuseExistingServer: !process.env.CI,
+    // 古いビルドを配信している別のサーバーを使わないよう、毎回ビルドして専用のポートで配信する
+    command: 'npm run build && npx vite preview --port 4317 --strictPort',
+    url: 'http://localhost:4317',
+    reuseExistingServer: false,
     timeout: 180_000,
   },
   projects: [
