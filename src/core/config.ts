@@ -71,7 +71,7 @@ export const STAGE = {
   randomIntervalStart: 4,
   randomIntervalEnd: 1,
   randomIntervalEndTime: 90,
-  /** スポーン:中心からの距離(マス。2体は中心を挟んで反対側)、落下高さ [m] */
+  /** スポーン:2体の間の距離(マス。中心を挟んで半分ずつ離れる)、落下高さ [m] */
   spawnDistance: 3,
   spawnHeight: 0.5,
   /** タイルの厚さ [m](上面が y = 0) */

@@ -182,7 +182,7 @@ describe('判断脳の入力と試合', () => {
     const [a, b] = m.fighters.map((f) => f.position());
     expect(a.x + b.x).toBeCloseTo(0, 6);
     expect(a.z + b.z).toBeCloseTo(0, 6);
-    expect(Math.hypot(a.x, a.z)).toBeCloseTo(STAGE.spawnDistance * Math.sqrt(3) * STAGE.tileCircumradius, 6);
+    expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeCloseTo(STAGE.spawnDistance * Math.sqrt(3) * STAGE.tileCircumradius, 6);
     const h = m.fighters[0].heading();
     expect(h.fx * -a.x + h.fz * -a.z).toBeGreaterThan(0.99 * Math.hypot(a.x, a.z));
     m.free();

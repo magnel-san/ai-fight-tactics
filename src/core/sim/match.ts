@@ -40,8 +40,6 @@ export interface MatchResult {
   time: number;
 }
 
-/** この距離より近づいたら「接触した」とみなす [m] */
-const CONTACT_DIST = 1.2;
 /** 接触からこの時間以内に落ちたら「押し出された」とみなす [s] */
 const PUSHED_WINDOW = 2;
 
@@ -66,7 +64,9 @@ export class MatchEpisode extends EpisodeBase {
 
     // スポーン:中心を挟んで反対側、中心を向いて、タイル上面から一定の高さに置く。並びの向きはシードで決める
     const rot = rng.int(6);
-    const spots = [rotateHex({ q: -STAGE.spawnDistance, r: 0 }, rot), rotateHex({ q: STAGE.spawnDistance, r: 0 }, rot)];
+    // 2体の間が spawnDistance マスになるよう、中心から半分ずつ離す(1体のときも同じ位置の片方を使う)
+    const half = STAGE.spawnDistance / 2;
+    const spots = [rotateHex({ q: -half, r: 0 }, rot), rotateHex({ q: half, r: 0 }, rot)];
     this.fighters = opts.fighters.map((data, i) => {
       const { x, z } = hexToWorld(spots[i], STAGE.tileCircumradius);
       const yaw = atan2(-x, -z);
@@ -137,6 +137,24 @@ export class MatchEpisode extends EpisodeBase {
     this.finish();
   }
 
+  /** 2体の体が触れているか */
+  private touching(): boolean {
+    const other = this.fighters[1].bodyHandles();
+    for (const c of this.fighters[0].colliders()) {
+      let hit = false;
+      this.world.contactPairsWith(c, (c2) => {
+        if (hit) return;
+        const parent = c2.parent();
+        if (!parent || !other.has(parent.handle)) return;
+        this.world.contactPair(c, c2, (manifold) => {
+          if (manifold.numContacts() > 0) hit = true;
+        });
+      });
+      if (hit) return true;
+    }
+    return false;
+  }
+
   /** 相手がどれだけ危険な場所にいるか(押し合いの報酬に使う) */
   private dangerOf(f: Fighter): number {
     const stage = this.stage!;
@@ -159,12 +177,8 @@ export class MatchEpisode extends EpisodeBase {
       this.fighters.filter((f) => !f.out).map((f) => f.position()),
     );
 
-    // 接触の記録
-    if (this.fighters.length === 2 && !this.fighters[0].out && !this.fighters[1].out) {
-      const a = this.fighters[0].position();
-      const b = this.fighters[1].position();
-      if (Math.sqrt((a.x - b.x) ** 2 + (a.z - b.z) ** 2) < CONTACT_DIST) this.lastContact = t;
-    }
+    // 接触の記録(2体のブロック同士が実際に触れているか)
+    if (this.fighters.length === 2 && !this.fighters[0].out && !this.fighters[1].out && this.touching()) this.lastContact = t;
 
     // 報酬(0番から見た値)
     const me = this.fighters[0];

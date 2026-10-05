@@ -1,6 +1,6 @@
 // 試合やトレーニングに参加する1体分の実行器。体(剛体)と運動脳をまとめ、
 // 「進む方向と速さ」の指令を受けて関節を動かす。指令を決めるのは判断脳・BOT・トレーニング課題のどれか。
-import type { World } from '@dimforge/rapier3d-compat';
+import type { Collider, World } from '@dimforge/rapier3d-compat';
 import { MotorBrain, type MotorCommand } from '../brain/motor';
 import { setJointTargets, spawnCreature, type Creature, type SpawnPose } from '../creature/assemble';
 import type { Blueprint } from '../creature/blueprint';
@@ -22,6 +22,18 @@ export class Fighter {
 
   get core() {
     return this.creature.bodies[0];
+  }
+
+  /** この体のすべてのコライダー */
+  colliders(): Collider[] {
+    const out: Collider[] = [];
+    for (const b of this.creature.bodies) for (let i = 0; i < b.numColliders(); i++) out.push(b.collider(i));
+    return out;
+  }
+
+  /** この体の剛体のハンドル(接触の相手が自分の体かどうかの判定に使う) */
+  bodyHandles(): Set<number> {
+    return new Set(this.creature.bodies.map((b) => b.handle));
   }
 
   position(): { x: number; y: number; z: number } {
