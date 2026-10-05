@@ -161,5 +161,6 @@ export function parseCharacter(input: string | unknown): Character {
   }
   const progress: Progress = { passed, generations };
   if (typeof p.surviveLevel === 'number') progress.surviveLevel = Math.min(5, Math.max(1, Math.floor(p.surviveLevel)));
+  if (Array.isArray(p.milestones)) progress.milestones = p.milestones.filter((m): m is string => typeof m === 'string').slice(0, 20);
   return { name, blueprint, motor, decision, progress };
 }

@@ -137,6 +137,8 @@ export interface EvalResult {
   metricMean: number;
   /** どれかのエピソードで起きたこと(マイルストーン用) */
   flags: EpisodeFlags;
+  /** エピソードごとに起きたこと(マイルストーンの場面を再生するのに使う) */
+  episodeFlags: EpisodeFlags[];
 }
 
 /** 1個体を複数のシードで評価する。i 番目のエピソードの方向は全周を seeds.length 等分した i 番目 */
@@ -149,6 +151,7 @@ export function evaluate(R: Rapier, task: TaskDef, setup: TaskSetup, genome: Flo
     successCount: successCount(outs),
     metricMean: metricMean(outs),
     flags,
+    episodeFlags: outs.map((o) => o.flags),
   };
 }
 

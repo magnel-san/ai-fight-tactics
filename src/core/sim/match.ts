@@ -26,13 +26,23 @@ export interface MatchOptions {
   timeLimit?: number;
 }
 
+/** 脱落の原因:相手と接触した直後に落ちたら「押し出された」、そうでなければ「自分で落ちた」 */
+export type FallCause = 'pushed' | 'fell';
+
 export interface MatchResult {
   /** 勝者の番号。引き分けは null */
   winner: number | null;
   /** 脱落した時刻 [s](脱落していなければ null) */
   outAt: (number | null)[];
+  /** 脱落の原因(脱落していなければ null) */
+  causes: (FallCause | null)[];
   time: number;
 }
+
+/** この距離より近づいたら「接触した」とみなす [m] */
+const CONTACT_DIST = 1.2;
+/** 接触からこの時間以内に落ちたら「押し出された」とみなす [s] */
+const PUSHED_WINDOW = 2;
 
 export class MatchEpisode extends EpisodeBase {
   readonly options: MatchOptions;
@@ -40,6 +50,8 @@ export class MatchEpisode extends EpisodeBase {
   private brains: (DecisionBrain | null)[];
   private result: MatchResult | null = null;
   private outAt: (number | null)[];
+  private causes: (FallCause | null)[];
+  private lastContact = -Infinity;
   private prevPush = 0;
 
   constructor(R: Rapier, opts: MatchOptions) {
@@ -62,10 +74,16 @@ export class MatchEpisode extends EpisodeBase {
     });
     this.brains = opts.fighters.map((d) => (d.controller === 'brain' && d.decision ? new DecisionBrain(d.decision) : null));
     this.outAt = opts.fighters.map(() => null);
+    this.causes = opts.fighters.map(() => null);
   }
 
   get stageOrThrow(): Stage {
     return this.stage!;
+  }
+
+  /** i 番目のキャラの判断脳(ルールベースのBOTなら null) */
+  decisionBrain(i: number): DecisionBrain | null {
+    return this.brains[i] ?? null;
   }
 
   matchResult(): MatchResult | null {
@@ -86,6 +104,7 @@ export class MatchEpisode extends EpisodeBase {
       if (!f.isFinite() || p.y < -PHYSICS.fallDepth) {
         f.out = true;
         this.outAt[i] = this.time;
+        this.causes[i] = this.fighters.length === 2 && this.time - this.lastContact < PUSHED_WINDOW ? 'pushed' : 'fell';
         anyOut = true;
       }
     });
@@ -97,7 +116,7 @@ export class MatchEpisode extends EpisodeBase {
   }
 
   private end(winner: number | null): void {
-    this.result = { winner, outAt: [...this.outAt], time: this.time };
+    this.result = { winner, outAt: [...this.outAt], causes: [...this.causes], time: this.time };
     const me = this.fighters[0];
     if (this.options.mode === 'survive') {
       if (me.out) this.reward -= SURVIVE_TASK.fallPenalty;
@@ -136,6 +155,13 @@ export class MatchEpisode extends EpisodeBase {
       BRAIN_DT,
       this.fighters.filter((f) => !f.out).map((f) => f.position()),
     );
+
+    // 接触の記録
+    if (this.fighters.length === 2 && !this.fighters[0].out && !this.fighters[1].out) {
+      const a = this.fighters[0].position();
+      const b = this.fighters[1].position();
+      if (Math.sqrt((a.x - b.x) ** 2 + (a.z - b.z) ** 2) < CONTACT_DIST) this.lastContact = t;
+    }
 
     // 報酬(0番から見た値)
     const me = this.fighters[0];

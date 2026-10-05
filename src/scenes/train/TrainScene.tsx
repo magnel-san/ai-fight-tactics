@@ -1,7 +1,7 @@
 // トレーニング画面(仕様書セクション9・10)。
 // メニューを順に解放しながら学習させる。学習はWorkerで進め、画面では最新の世代の最優秀個体のエピソードを
 // シードから再現して観戦する(上位個体は半透明のゴーストで重ねる)。
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createDecisionGenome } from '../../core/brain/decision';
 import { createMotorGenome } from '../../core/brain/motor';
 import type { Character } from '../../core/character';
@@ -9,19 +9,36 @@ import { TRAINING } from '../../core/config';
 import { jointCount } from '../../core/creature/blueprint';
 import { Rng } from '../../core/math/rng';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
-import type { Episode } from '../../core/training/episode';
+import type { Episode, EpisodeFlags } from '../../core/training/episode';
+import type { Sector } from '../../core/training/move';
 import { isUnlocked, TASK_ORDER, TASKS, type TaskName, type TaskSetup } from '../../core/training/tasks';
-import { pushOpponents } from '../../data/bots';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
-import { Trainer, type GenerationReport } from '../../training/Trainer';
+import { loadHistory, newId, saveHistory, saveReplay, type HistoryPoint } from '../../storage/db';
+import { Trainer, type GenerationReport, type Opponent } from '../../training/Trainer';
 import { defaultWorkerCount } from '../../training/WorkerPool';
+import { AwayHighlights, BrainPanel, CompareView, MILESTONE_LABELS, Toasts, type AwaySummary, type Toast } from './extras';
 import { FitnessChart } from './FitnessChart';
 
+/** トレーニングのエピソードのリプレイ(マイルストーンの場面など) */
+export interface TrainReplay {
+  type: 'train';
+  task: TaskName;
+  setup: TaskSetup;
+  genome: Float64Array;
+  seed: number;
+  sector: Sector;
+  title?: string;
+}
+
 interface Props {
+  charId: string;
   character: Character;
   onChange(update: (c: Character) => Character): void;
-  /** 表示中か */
+  /** 押し合いの相手(弱い順。標準BOTのあとに対戦相手プール) */
+  opponents: Opponent[];
   active: boolean;
+  /** 再生したいリプレイ(マイルストーンなど) */
+  replayRequest: TrainReplay | null;
 }
 
 type Speed = 1 | 4 | 0;
@@ -29,44 +46,77 @@ type Speed = 1 | 4 | 0;
 /** UI側で使うシード(core の外なので Math.random を使ってよい) */
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
 
+/** 留守中のハイライトを出す、タブを離れていた時間の下限 [ms] */
+const AWAY_MIN_MS = 30_000;
+
 /** 再生するもの */
 interface ReplaySource {
   task: TaskName;
   genome: Float64Array;
   ghosts: Float64Array[];
   seeds: number[];
+  sectors?: Sector[];
   setup: TaskSetup;
-  generation: number;
+  label: string;
   cursor: number;
+  /** 1回だけ再生して、その後は学習中の最新個体に戻る */
+  once?: boolean;
 }
 
 function setupFor(c: Character, task: TaskName): TaskSetup {
   return { blueprint: c.blueprint, motor: c.motor, decision: c.decision, level: task === 'survive' ? (c.progress.surviveLevel ?? 1) : 3, opponent: null };
 }
 
-export function TrainScene({ character, onChange, active }: Props) {
+/** 鍛える脳が運動脳なら、setup の運動脳を遺伝子に差し替える */
+function withGenome(setup: TaskSetup, task: TaskName, genome: Float64Array): TaskSetup {
+  return TASKS[task].brain === 'motor' ? { ...setup, motor: genome } : setup;
+}
+
+export function TrainScene({ charId, character, onChange, opponents, active, replayRequest }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<EpisodeViewer | null>(null);
   const rapierRef = useRef<Rapier | null>(null);
   const trainerRef = useRef<Trainer | null>(null);
+  const episodeRef = useRef<Episode | null>(null);
   const [task, setTask] = useState<TaskName>(() => TASK_ORDER.find((t) => isUnlocked(t, character.progress.passed) && !character.progress.passed.includes(t)) ?? 'move');
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
   const [showGhosts, setShowGhosts] = useState(true);
-  const [histories, setHistories] = useState<Partial<Record<TaskName, GenerationReport[]>>>({});
+  const [showBrain, setShowBrain] = useState(false);
+  const [reports, setReports] = useState<Partial<Record<TaskName, GenerationReport[]>>>({});
+  const [points, setPoints] = useState<Partial<Record<TaskName, HistoryPoint[]>>>({});
+  const [firstChampions, setFirstChampions] = useState<Partial<Record<TaskName, Float64Array>>>({});
   const [error, setError] = useState<string | null>(null);
   const [replayLabel, setReplayLabel] = useState('');
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [away, setAway] = useState<AwaySummary | null>(null);
+  const [comparing, setComparing] = useState(false);
 
   const characterRef = useRef(character);
   characterRef.current = character;
   const ghostsRef = useRef(showGhosts);
   ghostsRef.current = showGhosts;
   const replay = useRef<ReplaySource | null>(null);
+  const latestTraining = useRef<ReplaySource | null>(null);
+  const playNextRef = useRef<() => void>(() => {});
 
   const def = TASKS[task];
-  const history = histories[task] ?? [];
+  const sessionReports = reports[task] ?? [];
+  const history = points[task] ?? [];
   const passedList = character.progress.passed;
-  const opponents = pushOpponents();
+
+  // 保存してある学習履歴を読む
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const loaded: Partial<Record<TaskName, HistoryPoint[]>> = {};
+      for (const t of TASK_ORDER) loaded[t] = await loadHistory(charId, t);
+      if (!cancelled) setPoints(loaded);
+    })().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [charId]);
 
   /** 鍛える脳の現在の遺伝子(なければ新しく作る) */
   const currentGenome = (c: Character, t: TaskName): Float64Array =>
@@ -83,45 +133,43 @@ export function TrainScene({ character, onChange, active }: Props) {
     }
     const setup = setupFor(c, t);
     if (t === 'push') setup.opponent = opponents[0]?.data ?? null;
-    replay.current = {
-      task: t,
-      genome: currentGenome(c, t),
-      ghosts: [],
-      seeds: [randomSeed()],
-      setup,
-      generation: -1,
-      cursor: 0,
-    };
+    replay.current = { task: t, genome: currentGenome(c, t), ghosts: [], seeds: [randomSeed()], setup, label: '今の脳の動き', cursor: 0 };
+    latestTraining.current = null;
   };
 
   // 3D表示と Rapier の準備
   useEffect(() => {
     const viewer = new EpisodeViewer(canvasRef.current!);
     viewerRef.current = viewer;
+    viewer.onFrame = (ep) => {
+      episodeRef.current = ep;
+    };
     let cancelled = false;
 
     const playNext = () => {
       const R = rapierRef.current;
-      const r = replay.current;
+      let r = replay.current;
+      if (r?.once && r.cursor > 0) {
+        // 1回だけの再生が終わったら、学習中の最新個体に戻る
+        r = replay.current = latestTraining.current;
+      }
       if (!R || !r) return;
       const d = TASKS[r.task];
       const index = r.cursor % r.seeds.length;
       r.cursor++;
-      const sector = { index, count: r.seeds.length };
-      const make = (g: Float64Array): Episode => {
-        const setup = d.brain === 'motor' ? { ...r.setup, motor: g } : r.setup;
-        return d.createEpisode(R, setup, g, r.seeds[index], sector, 'train');
-      };
+      const sector = r.sectors?.[index] ?? { index, count: r.seeds.length };
+      const make = (g: Float64Array): Episode => d.createEpisode(R, withGenome(r!.setup, r!.task, g), g, r!.seeds[index], sector, 'train');
       try {
         const main = make(r.genome);
         // 押し合いは相手がいて重ねると見づらいので、ゴーストは1体のメニューだけ
         const ghosts = ghostsRef.current && main.fighters.length === 1 ? r.ghosts.slice(1).map(make) : [];
         viewer.setEpisodes(main, ghosts);
-        setReplayLabel(r.generation < 0 ? '学習前の動き' : `第${r.generation + 1}世代の最優秀個体${ghosts.length ? `(上位${ghosts.length + 1}体)` : ''}`);
+        setReplayLabel(`${r.label}${ghosts.length ? `(上位${ghosts.length + 1}体を重ねて表示)` : ''}`);
       } catch (e) {
         setError(String(e));
       }
     };
+    playNextRef.current = playNext;
     viewer.onEpisodeEnd = playNext;
 
     initRapier().then((R) => {
@@ -138,6 +186,23 @@ export function TrainScene({ character, onChange, active }: Props) {
     // 表示は最初に1回だけ作る。再生内容は replay.current で差し替える
   }, []);
 
+  // 外から渡されたリプレイ(マイルストーンなど)を1回再生する
+  useEffect(() => {
+    if (!replayRequest) return;
+    replay.current = {
+      task: replayRequest.task,
+      genome: replayRequest.genome,
+      ghosts: [],
+      seeds: [replayRequest.seed],
+      sectors: [replayRequest.sector],
+      setup: replayRequest.setup,
+      label: replayRequest.title ?? 'リプレイ',
+      cursor: 0,
+      once: true,
+    };
+    playNextRef.current();
+  }, [replayRequest]);
+
   // 終了時に学習を止める
   useEffect(
     () => () => {
@@ -150,6 +215,35 @@ export function TrainScene({ character, onChange, active }: Props) {
   useEffect(() => {
     if (viewerRef.current) viewerRef.current.speed = active ? speed : 0;
   }, [speed, active]);
+
+  // 放置学習:タブを離れている間も Worker で学習は続く。戻ってきたら留守中のハイライトを出す
+  const awaySnapshot = useRef<{ at: number; generations: number; best: number | null; milestones: string[]; passed: string[] } | null>(null);
+  useEffect(() => {
+    const onVisibility = () => {
+      const c = characterRef.current;
+      const gens = Object.values(c.progress.generations).reduce((s, g) => s + (g ?? 0), 0);
+      if (document.hidden) {
+        if (!trainerRef.current?.isRunning) return;
+        const last = points[task]?.[points[task]!.length - 1];
+        awaySnapshot.current = { at: Date.now(), generations: gens, best: last?.best ?? null, milestones: [...(c.progress.milestones ?? [])], passed: [...c.progress.passed] };
+      } else if (awaySnapshot.current) {
+        const s = awaySnapshot.current;
+        awaySnapshot.current = null;
+        if (Date.now() - s.at < AWAY_MIN_MS || gens === s.generations) return;
+        const now = points[task]?.[points[task]!.length - 1];
+        setAway({
+          minutes: Math.max(1, Math.round((Date.now() - s.at) / 60000)),
+          generations: gens - s.generations,
+          bestBefore: s.best,
+          bestAfter: now?.best ?? null,
+          milestones: (c.progress.milestones ?? []).filter((m) => !s.milestones.includes(m)).map((m) => MILESTONE_LABELS[m as keyof EpisodeFlags] ?? m),
+          passed: c.progress.passed.filter((t) => !s.passed.includes(t)).map((t) => TASKS[t].label),
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [points, task]);
 
   const stop = async () => {
     setRunning(false);
@@ -165,7 +259,10 @@ export function TrainScene({ character, onChange, active }: Props) {
     setTask(t);
     setError(null);
     resetReplay(t);
+    playNextRef.current();
   };
+
+  const dismissToast = useCallback((id: number) => setToasts((ts) => ts.filter((t) => t.id !== id)), []);
 
   const start = () => {
     setError(null);
@@ -177,7 +274,7 @@ export function TrainScene({ character, onChange, active }: Props) {
       return;
     }
     if (t === 'push' && opponents.length === 0) {
-      setError('標準BOTのデータがまだありません');
+      setError('押し合いの相手(標準BOT)のデータがありません');
       return;
     }
     // この学習を始める前までの世代数(観戦の表示に使う)
@@ -188,30 +285,7 @@ export function TrainScene({ character, onChange, active }: Props) {
         setupFor(c, t),
         currentGenome(c, t),
         randomSeed(),
-        (r) => {
-          onChange((prev) => {
-            const generations = { ...prev.progress.generations, [t]: (prev.progress.generations[t] ?? 0) + 1 };
-            const passed = r.passed && !prev.progress.passed.includes(t) ? [...prev.progress.passed, t] : prev.progress.passed;
-            const next: Character = { ...prev, progress: { ...prev.progress, generations, passed } };
-            if (d.brain === 'motor') next.motor = r.champion;
-            else {
-              next.decision = r.champion;
-              next.decisionStale = false;
-            }
-            if (t === 'survive') next.progress.surviveLevel = r.setup.level;
-            return next;
-          });
-          setHistories((h) => ({ ...h, [t]: [...(h[t] ?? []), r] }));
-          replay.current = {
-            task: t,
-            genome: r.champion,
-            ghosts: r.top,
-            seeds: r.seeds,
-            setup: d.brain === 'motor' ? { ...r.setup, motor: r.champion } : r.setup,
-            generation: baseGeneration + r.generation,
-            cursor: 0,
-          };
-        },
+        (r) => onReport(t, baseGeneration, r),
         (e) => {
           setError(e.message);
           setRunning(false);
@@ -227,11 +301,78 @@ export function TrainScene({ character, onChange, active }: Props) {
     }
   };
 
-  const last = history[history.length - 1];
-  const lastConfirm = [...history].reverse().find((r) => r.confirm !== null);
-  const totalSeconds = history.reduce((s, r) => s + r.seconds, 0);
+  /** 1世代ごとの報告:脳と育成状況の更新、履歴の保存、マイルストーン、観戦の差し替え */
+  const onReport = (t: TaskName, baseGeneration: number, r: GenerationReport) => {
+    const d = TASKS[t];
+    const c = characterRef.current;
+    const generation = baseGeneration + r.generation;
+
+    // マイルストーン(そのキャラで初めて起きたこと)
+    const known = c.progress.milestones ?? [];
+    const fresh = (Object.keys(r.moments) as (keyof EpisodeFlags)[]).filter((k) => !known.includes(k));
+    for (const k of fresh) {
+      const m = r.moments[k]!;
+      const title = `${MILESTONE_LABELS[k]}(${c.name}・${d.label} 第${generation + 1}世代)`;
+      setToasts((ts) => [...ts, { id: Date.now() + Math.random(), title: MILESTONE_LABELS[k], detail: `${d.label} 第${generation + 1}世代。リプレイを保存しました` }]);
+      const data: TrainReplay = { type: 'train', task: t, setup: withGenome(r.setup, t, m.genome), genome: m.genome, seed: m.seed, sector: m.sector, title };
+      void saveReplay({ id: newId(), kind: 'milestone', title, createdAt: Date.now(), data });
+    }
+
+    onChange((prev) => {
+      const generations = { ...prev.progress.generations, [t]: (prev.progress.generations[t] ?? 0) + 1 };
+      const passed = r.passed && !prev.progress.passed.includes(t) ? [...prev.progress.passed, t] : prev.progress.passed;
+      const milestones = [...(prev.progress.milestones ?? []), ...fresh.filter((k) => !(prev.progress.milestones ?? []).includes(k))];
+      const next: Character = { ...prev, progress: { ...prev.progress, generations, passed, milestones } };
+      if (d.brain === 'motor') next.motor = r.champion;
+      else {
+        next.decision = r.champion;
+        next.decisionStale = false;
+      }
+      if (t === 'survive') next.progress.surviveLevel = r.setup.level;
+      return next;
+    });
+    if (r.passed && !c.progress.passed.includes(t)) {
+      setToasts((ts) => [...ts, { id: Date.now() + Math.random(), title: `「${d.label}」に合格!`, detail: r.confirm?.text ?? '' }]);
+    }
+
+    setReports((h) => ({ ...h, [t]: [...(h[t] ?? []), r] }));
+    setPoints((p) => {
+      const list = [...(p[t] ?? []), { best: r.best, mean: r.mean, passed: r.passed }];
+      void saveHistory(charId, t, list);
+      return { ...p, [t]: list };
+    });
+    setFirstChampions((f) => (f[t] ? f : { ...f, [t]: r.champion }));
+
+    const source: ReplaySource = {
+      task: t,
+      genome: r.champion,
+      ghosts: r.top,
+      seeds: r.seeds,
+      setup: withGenome(r.setup, t, r.champion),
+      label: `第${generation + 1}世代の最優秀個体`,
+      cursor: 0,
+    };
+    latestTraining.current = source;
+    if (!replay.current?.once) replay.current = source;
+  };
+
+  const makeCompare = useCallback(
+    (side: 0 | 1): Episode | null => {
+      const R = rapierRef.current;
+      const last = sessionReports[sessionReports.length - 1];
+      const first = firstChampions[task];
+      if (!R || !last || !first) return null;
+      const g = side === 0 ? first : last.champion;
+      return TASKS[task].createEpisode(R, withGenome(last.setup, task, g), g, last.seeds[0], { index: 0, count: last.seeds.length }, 'train');
+    },
+    [sessionReports, firstChampions, task],
+  );
+
+  const last = sessionReports[sessionReports.length - 1];
+  const lastConfirm = [...sessionReports].reverse().find((r) => r.confirm !== null);
+  const totalSeconds = sessionReports.reduce((s, r) => s + r.seconds, 0);
   const passed = passedList.includes(task);
-  const locked = !isUnlocked(task, passedList);
+  const locked = !isUnlocked(task, passedList) || !!character.readOnly;
   const generations = character.progress.generations[task] ?? 0;
 
   return (
@@ -277,6 +418,9 @@ export function TrainScene({ character, onChange, active }: Props) {
               {generations > 0 ? '学習を再開' : '学習開始'}
             </button>
           )}
+          <button onClick={() => setComparing(true)} disabled={!firstChampions[task] || sessionReports.length < 2} title="第1世代と最新世代を同じシードで並べて再生します">
+            比較リプレイ
+          </button>
         </div>
         {error && <p className="message error">{error}</p>}
 
@@ -318,13 +462,31 @@ export function TrainScene({ character, onChange, active }: Props) {
             <input type="checkbox" checked={showGhosts} onChange={(e) => setShowGhosts(e.target.checked)} />
             ゴースト
           </label>
+          <label className="ghost-toggle">
+            <input type="checkbox" checked={showBrain} onChange={(e) => setShowBrain(e.target.checked)} />
+            脳の様子
+          </label>
           {([1, 4, 0] as Speed[]).map((s) => (
             <button key={s} className={speed === s ? 'selected' : ''} onClick={() => setSpeed(s)}>
               {s === 0 ? '描画なし' : `${s}倍`}
             </button>
           ))}
         </div>
+        {showBrain && (
+          <div className="brain-wrap">
+            <BrainPanel episodeRef={episodeRef} />
+          </div>
+        )}
+        <Toasts toasts={toasts} onDismiss={dismissToast} />
       </div>
+      {away && <AwayHighlights summary={away} onClose={() => setAway(null)} />}
+      {comparing && (
+        <CompareView
+          make={makeCompare}
+          labels={[`第${(character.progress.generations[task] ?? 0) - sessionReports.length + 1}世代`, `第${character.progress.generations[task] ?? 0}世代`]}
+          onClose={() => setComparing(false)}
+        />
+      )}
     </div>
   );
 }

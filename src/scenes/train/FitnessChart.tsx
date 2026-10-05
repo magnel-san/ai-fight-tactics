@@ -1,11 +1,11 @@
 // 世代ごとの最高・平均の適応度の折れ線グラフ
-import type { GenerationReport } from '../../training/Trainer';
+import type { HistoryPoint } from '../../storage/db';
 
 const W = 248;
 const H = 140;
 const PAD = { left: 30, right: 6, top: 8, bottom: 18 };
 
-export function FitnessChart({ history }: { history: GenerationReport[] }) {
+export function FitnessChart({ history }: { history: HistoryPoint[] }) {
   if (history.length < 2) return <p className="chart-empty">2世代以上でグラフを表示します</p>;
 
   const values = history.flatMap((r) => [r.best, r.mean]);

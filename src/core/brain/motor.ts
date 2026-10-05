@@ -43,8 +43,9 @@ export interface MotorCommand {
 export class MotorBrain {
   readonly shape: MlpShape;
   private input: Float64Array;
-  private hidden: Float64Array;
-  private output: Float64Array;
+  /** 隠れ層の活性(「脳の様子」の表示用) */
+  readonly hidden: Float64Array;
+  readonly output: Float64Array;
   private period: number;
 
   constructor(

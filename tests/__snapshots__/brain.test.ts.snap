@@ -2,6 +2,29 @@
 
 exports[`トレーニング「目標地点への移動」 > 同じ遺伝子・同じシードなら結果が完全に一致する 1`] = `
 {
+  "episodeFlags": [
+    {
+      "crossed": false,
+      "reached": false,
+      "stood": true,
+      "survived60": false,
+      "won": false,
+    },
+    {
+      "crossed": false,
+      "reached": false,
+      "stood": true,
+      "survived60": false,
+      "won": false,
+    },
+    {
+      "crossed": false,
+      "reached": false,
+      "stood": true,
+      "survived60": false,
+      "won": false,
+    },
+  ],
   "fitness": 0.6395769003182133,
   "flags": {
     "crossed": false,

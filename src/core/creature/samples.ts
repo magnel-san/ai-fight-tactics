@@ -48,8 +48,14 @@ export const SNAKE: Blueprint = {
   ],
 };
 
+/** 標準BOTの体:4本脚の正面に、当たった相手を弾く弾力ブロックを付けたもの。コスト24、関節4 */
+export const STANDARD_BODY: Blueprint = {
+  blocks: [...QUADRUPED.blocks, { id: 11, type: 'bouncy', parent: 1, face: '+z' }],
+};
+
 export const SAMPLES: Record<string, Blueprint> = {
   quadruped: QUADRUPED,
+  standard: STANDARD_BODY,
   crawler: CRAWLER,
   snake: SNAKE,
 };

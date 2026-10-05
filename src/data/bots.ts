@@ -36,6 +36,6 @@ export function pushOpponents(): Opponent[] {
   if (!rush || !standard) return [];
   return [
     { label: '突進BOT', data: rush },
-    { label: '標準BOT', data: standard },
+    { label: '標準BOT', data: standard, passTarget: true },
   ];
 }

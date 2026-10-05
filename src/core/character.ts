@@ -9,6 +9,8 @@ export interface Progress {
   generations: Partial<Record<TaskName, number>>;
   /** 生き残りの現在のレベル */
   surviveLevel?: number;
+  /** 達成したマイルストーン */
+  milestones?: string[];
 }
 
 export interface Character {

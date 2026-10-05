@@ -3,6 +3,7 @@
 import { CHASE_TASK, SURVIVE_TASK, TRAINING } from '../core/config';
 import { Rng } from '../core/math/rng';
 import type { EpisodeFlags } from '../core/training/episode';
+import type { Sector } from '../core/training/move';
 import { GeneticAlgorithm, type GenerationStats } from '../core/training/ga';
 import { TASKS, type EvalResult, type FighterData, type TaskName, type TaskSetup } from '../core/training/tasks';
 import { WorkerPool, type EvalPool } from './WorkerPool';
@@ -24,6 +25,8 @@ export interface GenerationReport extends GenerationStats {
   top: Float64Array[];
   /** この世代の集団のどれかで起きたこと(マイルストーン用) */
   flags: EpisodeFlags;
+  /** 起きたことごとに、その場面を再生するためのデータ(成績の良い個体を優先) */
+  moments: Partial<Record<keyof EpisodeFlags, Moment>>;
   /** 合格の確認をしたときの結果(しなかったら null) */
   confirm: { passed: boolean; text: string } | null;
   /** 段階の説明(「レベル3」「突進BOT」など) */
@@ -34,9 +37,18 @@ export interface GenerationReport extends GenerationStats {
   seconds: number;
 }
 
+/** マイルストーンの場面:この遺伝子で、このシード・方向のエピソードを再生すると起きる */
+export interface Moment {
+  genome: Float64Array;
+  seed: number;
+  sector: Sector;
+}
+
 export interface Opponent {
   label: string;
   data: FighterData;
+  /** この相手に勝てたらメニュー合格(標準BOT)。省略時は最後の相手 */
+  passTarget?: boolean;
 }
 
 export class Trainer {
@@ -117,11 +129,12 @@ export class Trainer {
     }
     if (this.task === 'push') {
       const last = this.opponentIndex === this.opponents.length - 1;
+      const target = this.opponents[this.opponentIndex].passTarget ?? last;
       if (!last) {
         this.opponentIndex++;
         this.setup.opponent = this.opponents[this.opponentIndex].data;
       }
-      return last;
+      return target || this.passed;
     }
     return true;
   }
@@ -143,6 +156,17 @@ export class Trainer {
         const champion = population[stats.bestIndex];
         const flags = { ...best.flags };
         for (const r of results) for (const k of Object.keys(flags) as (keyof EpisodeFlags)[]) flags[k] ||= r.flags[k];
+        const moments: GenerationReport['moments'] = {};
+        for (const k of Object.keys(flags) as (keyof EpisodeFlags)[]) {
+          if (!flags[k]) continue;
+          for (const i of order) {
+            const e = results[i].episodeFlags.findIndex((f) => f[k]);
+            if (e >= 0) {
+              moments[k] = { genome: population[i], seed: seeds[e], sector: { index: e, count: seeds.length } };
+              break;
+            }
+          }
+        }
 
         let confirm: GenerationReport['confirm'] = null;
         if (this.shouldConfirm(best)) {
@@ -162,6 +186,7 @@ export class Trainer {
           champion,
           top: order.slice(0, GHOST_COUNT).map((i) => population[i]),
           flags,
+          moments,
           confirm,
           stageLabel,
           passed: this.passed,
