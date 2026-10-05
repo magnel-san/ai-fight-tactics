@@ -46,6 +46,9 @@ type Speed = 1 | 4 | 0;
 /** UI側で使うシード(core の外なので Math.random を使ってよい) */
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
 
+/** この世代数を超えても合格しないとき、見直しのヒントを出す */
+const STUCK_GENERATIONS = 150;
+
 /** 留守中のハイライトを出す、タブを離れていた時間の下限 [ms] */
 const AWAY_MIN_MS = 30_000;
 
@@ -437,6 +440,11 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
           </button>
         </div>
         {error && <p className="message error">{error}</p>}
+        {!passed && generations >= STUCK_GENERATIONS && (
+          <p className="message">
+            なかなか合格しないときは、体を組み直してみましょう(脚で地面をけって歩く体は安定しやすく、腹ばいの体はその場で回りやすい)。個体数を増やすのも効果があります。
+          </p>
+        )}
 
         <h2>状況</h2>
         <dl className="stats">
