@@ -335,3 +335,36 @@ button.primary {
   color: var(--muted);
   font-size: 12px;
 }
+.menu-list {
+  display: grid;
+  gap: 6px;
+}
+.menu-list .menu-item {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+.menu-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.optional {
+  margin-left: 6px;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.menu-detail {
+  margin: 10px 0 4px;
+}
+.ghost-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 0 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+}

@@ -1,0 +1,165 @@
+// キャラのJSON形式(仕様書セクション12)。重みは float16 のバイト列を base64 にして持つ。
+// 形式を変えたときは version を上げ、migrate() に移行処理を書く。
+// 受け取ったデータは信用せず、parseCharacter() で形と値を検証してから使う(不正対策)。
+import { decisionGenomeLength, DECISION_SHAPE } from './brain/decision';
+import { fromF16Bits, toF16Bits } from './brain/f16';
+import { motorGenomeLength, motorShape, rhythmPeriod } from './brain/motor';
+import type { Character, Progress } from './character';
+import { jointCount, validate, type Blueprint, type BlockSpec } from './creature/blueprint';
+import { TASK_ORDER, type TaskName } from './training/tasks';
+
+export const FORMAT_VERSION = 1;
+
+interface BrainJson {
+  inputs: number;
+  hidden: number;
+  outputs: number;
+  weights: string;
+}
+
+export interface CharacterJson {
+  version: number;
+  name: string;
+  blueprint: Blueprint;
+  brains: {
+    /** weights の最後の1個はリズム周期の遺伝子(周期の対数)。rhythmPeriod は確認用の値 */
+    motor: (BrainJson & { rhythmPeriod: number }) | null;
+    decision: BrainJson | null;
+  };
+  progress: Progress;
+}
+
+// ---- base64(DOM の btoa に頼らず、どの環境でも同じ結果にする) ----
+
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i];
+    const b = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    const n = (a << 16) | (b << 8) | c;
+    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63];
+    out += i + 1 < bytes.length ? B64[(n >> 6) & 63] : '=';
+    out += i + 2 < bytes.length ? B64[n & 63] : '=';
+  }
+  return out;
+}
+
+export function base64ToBytes(s: string): Uint8Array {
+  const clean = s.replace(/=+$/, '');
+  if (!/^[A-Za-z0-9+/]*$/.test(clean)) throw new Error('base64 の形式が不正です');
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  let o = 0;
+  for (let i = 0; i < clean.length; i += 4) {
+    const n =
+      (B64.indexOf(clean[i]) << 18) |
+      (B64.indexOf(clean[i + 1] ?? 'A') << 12) |
+      (B64.indexOf(clean[i + 2] ?? 'A') << 6) |
+      B64.indexOf(clean[i + 3] ?? 'A');
+    if (o < out.length) out[o++] = (n >> 16) & 255;
+    if (o < out.length) out[o++] = (n >> 8) & 255;
+    if (o < out.length) out[o++] = n & 255;
+  }
+  return out;
+}
+
+/** 重みを float16(リトルエンディアン)のバイト列にして base64 にする */
+export function encodeWeights(w: Float64Array): string {
+  const bytes = new Uint8Array(w.length * 2);
+  for (let i = 0; i < w.length; i++) {
+    const h = toF16Bits(w[i]);
+    bytes[2 * i] = h & 255;
+    bytes[2 * i + 1] = h >> 8;
+  }
+  return bytesToBase64(bytes);
+}
+
+export function decodeWeights(s: string): Float64Array {
+  const bytes = base64ToBytes(s);
+  if (bytes.length % 2 !== 0) throw new Error('重みのバイト数が不正です');
+  const w = new Float64Array(bytes.length / 2);
+  for (let i = 0; i < w.length; i++) w[i] = fromF16Bits(bytes[2 * i] | (bytes[2 * i + 1] << 8));
+  return w;
+}
+
+export function characterToJson(c: Character): CharacterJson {
+  const joints = jointCount(c.blueprint);
+  const ms = motorShape(joints);
+  return {
+    version: FORMAT_VERSION,
+    name: c.name,
+    blueprint: c.blueprint,
+    brains: {
+      motor: c.motor
+        ? { inputs: ms.inputs, hidden: ms.hidden, outputs: ms.outputs, rhythmPeriod: Number(rhythmPeriod(c.motor).toFixed(3)), weights: encodeWeights(c.motor) }
+        : null,
+      decision: c.decision ? { ...DECISION_SHAPE, weights: encodeWeights(c.decision) } : null,
+    },
+    progress: c.progress,
+  };
+}
+
+/** 古い形式を新しい形式に直す(今は version 1 のみ) */
+function migrate(json: { version?: unknown }): CharacterJson {
+  if (json.version === FORMAT_VERSION) return json as CharacterJson;
+  throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
+}
+
+const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'grip']);
+const FACES = new Set(['+x', '-x', '+y', '-y', '+z', '-z']);
+const AXES = new Set(['x', 'y', 'z']);
+
+function parseBlueprint(v: unknown): Blueprint {
+  if (!v || typeof v !== 'object' || !Array.isArray((v as Blueprint).blocks)) throw new Error('設計図がありません');
+  const blocks: BlockSpec[] = (v as Blueprint).blocks.map((b: unknown, i: number) => {
+    const o = b as Record<string, unknown>;
+    if (!o || typeof o !== 'object') throw new Error(`ブロック${i}が不正です`);
+    if (!BLOCK_TYPES.has(o.type as string)) throw new Error(`ブロック${i}の種類が不正です`);
+    const spec: BlockSpec = { id: Number(o.id), type: o.type as BlockSpec['type'], parent: o.parent === null ? null : Number(o.parent) };
+    if (o.face !== undefined) {
+      if (!FACES.has(o.face as string)) throw new Error(`ブロック${i}の面が不正です`);
+      spec.face = o.face as BlockSpec['face'];
+    }
+    if (o.axis !== undefined) {
+      if (!AXES.has(o.axis as string)) throw new Error(`ブロック${i}の軸が不正です`);
+      spec.axis = o.axis as BlockSpec['axis'];
+    }
+    return spec;
+  });
+  const bp = { blocks };
+  const errors = validate(bp);
+  if (errors.length > 0) throw new Error(errors[0]);
+  return bp;
+}
+
+function parseWeights(brain: BrainJson | null | undefined, length: number, label: string): Float64Array | null {
+  if (brain === null || brain === undefined) return null;
+  if (typeof brain.weights !== 'string') throw new Error(`${label}の重みがありません`);
+  const w = decodeWeights(brain.weights);
+  if (w.length !== length) throw new Error(`${label}の重みの数が体と合いません:${w.length}(必要 ${length})`);
+  for (const x of w) if (!Number.isFinite(x)) throw new Error(`${label}の重みに不正な値があります`);
+  return w;
+}
+
+/** JSON(文字列またはオブジェクト)を検証してキャラにする */
+export function parseCharacter(input: string | unknown): Character {
+  const raw = typeof input === 'string' ? JSON.parse(input) : input;
+  if (!raw || typeof raw !== 'object') throw new Error('キャラのデータではありません');
+  const json = migrate(raw as { version?: unknown });
+  const blueprint = parseBlueprint(json.blueprint);
+  const name = typeof json.name === 'string' && json.name.trim() ? json.name.slice(0, 40) : '名無し';
+  const motor = parseWeights(json.brains?.motor, motorGenomeLength(jointCount(blueprint)), '運動脳');
+  const decision = parseWeights(json.brains?.decision, decisionGenomeLength(), '判断脳');
+  const p = (json.progress ?? {}) as Partial<Progress>;
+  const passed = Array.isArray(p.passed) ? p.passed.filter((t): t is TaskName => TASK_ORDER.includes(t as TaskName)) : [];
+  const generations: Progress['generations'] = {};
+  for (const t of TASK_ORDER) {
+    const g = (p.generations as Record<string, unknown> | undefined)?.[t];
+    if (typeof g === 'number' && Number.isFinite(g) && g >= 0) generations[t] = Math.floor(g);
+  }
+  const progress: Progress = { passed, generations };
+  if (typeof p.surviveLevel === 'number') progress.surviveLevel = Math.min(5, Math.max(1, Math.floor(p.surviveLevel)));
+  return { name, blueprint, motor, decision, progress };
+}

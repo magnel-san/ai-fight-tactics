@@ -1,58 +1,86 @@
 // トレーニングの進行役(メインスレッド)。遺伝的アルゴリズムで世代を進め、評価は WorkerPool に任せる。
-// 世代が終わるたびに統計と最優秀個体を通知する。
-import { MOVE_TASK, TRAINING } from '../core/config';
-import type { Blueprint } from '../core/creature/blueprint';
+// メニューごとの段階(生き残りのレベル、押し合いの相手)もここで進める。
+import { CHASE_TASK, SURVIVE_TASK, TRAINING } from '../core/config';
 import { Rng } from '../core/math/rng';
+import type { EpisodeFlags } from '../core/training/episode';
 import { GeneticAlgorithm, type GenerationStats } from '../core/training/ga';
-import type { TaskName } from '../workers/protocol';
-import { WorkerPool } from './WorkerPool';
+import { TASKS, type EvalResult, type FighterData, type TaskName, type TaskSetup } from '../core/training/tasks';
+import { WorkerPool, type EvalPool } from './WorkerPool';
+
+/** 観戦で重ねて表示する上位個体の数 */
+export const GHOST_COUNT = 16;
 
 export interface GenerationReport extends GenerationStats {
-  /** 最優秀個体が評価エピソードで目標に到達した回数 */
-  bestReached: number;
-  /** この世代の評価に使ったシード(観戦で同じ試合を再現するのに使う) */
+  task: TaskName;
+  /** 最優秀個体の評価結果 */
+  bestResult: EvalResult;
+  /** この世代の評価に使ったシード(観戦で同じエピソードを再現するのに使う) */
   seeds: number[];
+  /** この世代の評価に使った条件(レベル・相手) */
+  setup: TaskSetup;
   /** この世代の最優秀個体の遺伝子 */
   champion: Float64Array;
+  /** 上位個体の遺伝子(成績順、ゴースト表示用) */
+  top: Float64Array[];
+  /** この世代の集団のどれかで起きたこと(マイルストーン用) */
+  flags: EpisodeFlags;
   /** 合格の確認をしたときの結果(しなかったら null) */
-  confirm: { reached: number; episodes: number } | null;
-  /** 合格したか(確認エピソードでも合格条件の割合を満たした) */
+  confirm: { passed: boolean; text: string } | null;
+  /** 段階の説明(「レベル3」「突進BOT」など) */
+  stageLabel: string;
+  /** メニューに合格したか */
   passed: boolean;
   /** 1世代にかかった時間 [s] */
   seconds: number;
 }
 
+export interface Opponent {
+  label: string;
+  data: FighterData;
+}
+
 export class Trainer {
   private ga: GeneticAlgorithm;
   private rng: Rng;
-  private pool: WorkerPool | null = null;
+  private pool: EvalPool | null = null;
   private running = false;
   private loop: Promise<void> | null = null;
+  private setup: TaskSetup;
+  /** 押し合いの相手の段階(opponents の番号) */
+  private opponentIndex = 0;
+  private passed: boolean;
 
   constructor(
     private task: TaskName,
-    private blueprint: Blueprint,
+    setup: TaskSetup,
     initialGenome: Float64Array,
     seed: number,
     private onGeneration: (r: GenerationReport) => void,
     private onError: (e: Error) => void = console.error,
+    /** 押し合いの相手(弱い順) */
+    private opponents: Opponent[] = [],
+    alreadyPassed = false,
+    /** 評価に使うプール(省略時はブラウザの WorkerPool を作る) */
+    private poolFactory: () => EvalPool = () => new WorkerPool(),
   ) {
     this.rng = new Rng(seed);
     this.ga = new GeneticAlgorithm(initialGenome, this.rng.nextU32());
+    this.setup = { ...setup };
+    this.passed = alreadyPassed;
+    if (task === 'push') {
+      if (opponents.length === 0) throw new Error('押し合いの相手がいません');
+      this.setup.opponent = opponents[0].data;
+    }
   }
 
   get isRunning(): boolean {
     return this.running;
   }
 
-  get workerCount(): number {
-    return this.pool?.size ?? 0;
-  }
-
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.pool ??= new WorkerPool();
+    this.pool ??= this.poolFactory();
     this.loop = this.run();
   }
 
@@ -68,47 +96,82 @@ export class Trainer {
     this.pool = null;
   }
 
+  private stageLabel(): string {
+    if (this.task === 'survive') return `レベル${this.setup.level}`;
+    if (this.task === 'push') return `相手:${this.opponents[this.opponentIndex].label}`;
+    return '';
+  }
+
+  /** 合格の確認をするか(最優秀個体が評価エピソードで合格条件を満たしたとき) */
+  private shouldConfirm(best: EvalResult): boolean {
+    if (this.task === 'chase') return best.metricMean >= CHASE_TASK.passAlignment;
+    return best.successCount >= 2;
+  }
+
+  /** 確認に通ったときに段階を進める。メニューに合格したら true */
+  private advanceStage(): boolean {
+    if (this.task === 'survive') {
+      const level = this.setup.level;
+      if (level < SURVIVE_TASK.levelPace.length) this.setup.level = level + 1;
+      return level >= SURVIVE_TASK.passLevel;
+    }
+    if (this.task === 'push') {
+      const last = this.opponentIndex === this.opponents.length - 1;
+      if (!last) {
+        this.opponentIndex++;
+        this.setup.opponent = this.opponents[this.opponentIndex].data;
+      }
+      return last;
+    }
+    return true;
+  }
+
   private async run(): Promise<void> {
+    const task = TASKS[this.task];
     while (this.running && this.pool) {
       const t0 = performance.now();
       const seeds = Array.from({ length: TRAINING.episodesPerGeneration }, () => this.rng.nextU32());
-      const population = this.ga.population;
-      let results;
+      const setup = { ...this.setup };
+      const stageLabel = this.stageLabel();
+      const population = this.ga.population.map((g) => Float64Array.from(g));
       try {
-        results = await this.pool.evaluate(this.task, this.blueprint, population, seeds);
+        const results = await this.pool.evaluate(this.task, setup, population, seeds);
+        if (!this.running) return;
+        const order = [...results.keys()].sort((a, b) => results[b].fitness - results[a].fitness || a - b);
+        const stats = this.ga.tell(results.map((r) => r.fitness));
+        const best = results[stats.bestIndex];
+        const champion = population[stats.bestIndex];
+        const flags = { ...best.flags };
+        for (const r of results) for (const k of Object.keys(flags) as (keyof EpisodeFlags)[]) flags[k] ||= r.flags[k];
+
+        let confirm: GenerationReport['confirm'] = null;
+        if (this.shouldConfirm(best)) {
+          const confirmSeeds = Array.from({ length: task.confirmEpisodes }, () => this.rng.nextU32());
+          const outcomes = await this.pool.confirm(this.task, setup, champion, confirmSeeds);
+          const ok = task.passed(outcomes);
+          confirm = { passed: ok, text: task.describe(outcomes) };
+          if (ok && this.advanceStage()) this.passed = true;
+        }
+
+        this.onGeneration({
+          ...stats,
+          task: this.task,
+          bestResult: best,
+          seeds,
+          setup,
+          champion,
+          top: order.slice(0, GHOST_COUNT).map((i) => population[i]),
+          flags,
+          confirm,
+          stageLabel,
+          passed: this.passed,
+          seconds: (performance.now() - t0) / 1000,
+        });
       } catch (e) {
         this.running = false;
         this.onError(e as Error);
         return;
       }
-      if (!this.running) return;
-      const stats = this.ga.tell(results.map((r) => r.fitness));
-      const best = results[stats.bestIndex];
-      // tell() の後、エリート保存で最優秀個体は新しい集団の先頭に来ている
-      const champion = Float64Array.from(this.ga.population[0]);
-
-      let confirm: GenerationReport['confirm'] = null;
-      if (best.reachedCount >= MOVE_TASK.passCount) {
-        const confirmSeeds = Array.from({ length: MOVE_TASK.confirmEpisodes }, () => this.rng.nextU32());
-        try {
-          const [r] = await this.pool.evaluate(this.task, this.blueprint, [champion], confirmSeeds);
-          confirm = { reached: r.reachedCount, episodes: MOVE_TASK.confirmEpisodes };
-        } catch (e) {
-          this.running = false;
-          this.onError(e as Error);
-          return;
-        }
-      }
-
-      this.onGeneration({
-        ...stats,
-        bestReached: best.reachedCount,
-        seeds,
-        champion,
-        confirm,
-        passed: confirm !== null && confirm.reached >= MOVE_TASK.confirmPassCount,
-        seconds: (performance.now() - t0) / 1000,
-      });
     }
   }
 }

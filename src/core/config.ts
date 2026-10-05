@@ -71,14 +71,87 @@ export const STAGE = {
   randomIntervalStart: 4,
   randomIntervalEnd: 1,
   randomIntervalEndTime: 90,
-  /** スポーン:中心を挟んだ距離(マス)、落下高さ [m] */
+  /** スポーン:中心からの距離(マス。2体は中心を挟んで反対側)、落下高さ [m] */
   spawnDistance: 3,
   spawnHeight: 0.5,
+  /** タイルの厚さ [m](上面が y = 0) */
+  tileHeight: 0.4,
+  tileFriction: 0.8,
 } as const;
 
 export const BATTLE = {
   /** 試合の時間制限 [s] */
   timeLimit: 150,
+} as const;
+
+/** トレーニング「対象を追う」(メニュー2) */
+export const CHASE_TASK = {
+  /** 目標の初期距離 [m] */
+  startDist: 3,
+  /** 目標が逃げる速さ [m/s] */
+  targetSpeed: 0.25,
+  /** 目標が曲がる間隔 [s] と、曲がる角度の最大 [rad] */
+  turnIntervalMin: 2,
+  turnIntervalMax: 4,
+  turnAngleMax: Math.PI / 2,
+  timeLimit: 15,
+  /** 一致度の計算で、これより遅い動きは速さをこの値とみなす(止まっていると一致度が上がらない) [m/s] */
+  alignMinSpeed: 0.1,
+  /** 一致度の計測を始めるまでの時間 [s](動き出すまでの猶予) */
+  warmup: 1,
+  /** 報酬で一致度にかける重み [/s] */
+  alignWeight: 0.5,
+  /** 合格条件:一致度の平均 */
+  passAlignment: 0.7,
+} as const;
+
+/** トレーニング「穴をまたぐ」(メニュー3) */
+export const HOLES_TASK = {
+  /** 穴の列の位置(アキシャル座標の r)。スタートは r = startRow */
+  holeRows: [-2, 1, 4],
+  startRow: -5,
+  timeLimit: 20,
+  /** 落下したときの減点 */
+  fallPenalty: 10,
+  /** 合格条件:越えなければならない穴の列の数 */
+  passRows: 2,
+} as const;
+
+/** トレーニング「崩落ステージを生き残る」(メニュー4) */
+export const SURVIVE_TASK = {
+  timeLimit: 60,
+  /** レベル1〜5の崩落ペース(安全円の縮小とランダム崩落の進み方の倍率) */
+  levelPace: [0.6, 0.8, 1.0, 1.25, 1.5],
+  /** 合格に必要なレベル */
+  passLevel: 3,
+  /** 安全なタイルの上にいるときの加点、危険なタイルの上にいるときの減点 [/s] */
+  safeBonus: 1,
+  dangerPenalty: 1,
+  /** 生存時間1秒あたりの加点 */
+  aliveBonus: 0.5,
+  fallPenalty: 20,
+} as const;
+
+/** トレーニング「BOTとの押し合い」(メニュー5) */
+export const PUSH_TASK = {
+  /** トレーニング中の試合時間 [s](本番の試合より短くして学習を速くする) */
+  timeLimit: 60,
+  winBonus: 20,
+  losePenalty: 20,
+  /** 相手を危険な場所へ近づけた量にかける重み */
+  pushWeight: 2,
+  aliveBonus: 0.2,
+  /** 合格の確認の試合数と、必要な勝ち数(勝率60%) */
+  confirmMatches: 10,
+  confirmWins: 6,
+} as const;
+
+/** マイルストーンの判定 */
+export const MILESTONE = {
+  /** 「初めて立った」:コアの上方向の鉛直成分がこれ以上で、コアの高さがこれ以上の状態を、この秒数保つ */
+  standUpright: 0.9,
+  standHeight: 0.5,
+  standSeconds: 3,
 } as const;
 
 export const BRAIN = {
@@ -92,6 +165,13 @@ export const BRAIN = {
   linvelScale: 2,
   angvelScale: 5,
   jointVelScale: 10,
+  /** 判断脳のセンサー値をそろえる目安 [m]・[m/s]・[マス] */
+  decisionPosScale: 6,
+  decisionVelScale: 2,
+  decisionDistScale: 8,
+  safeRadiusScale: 12,
+  /** 運動脳の「足元」:指令方向の前方のこれらの距離 [m] が穴かどうか */
+  footingDistances: [0.6, 1.2, 1.8],
   /** リズム信号の周期 [s]。遺伝子として学習するが、この範囲に収める */
   rhythmPeriodMin: 0.3,
   rhythmPeriodMax: 2.0,

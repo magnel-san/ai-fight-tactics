@@ -15,10 +15,21 @@ export const BLOCK_COLORS: Record<BlockType, number> = {
 export interface CreatureMesh {
   root: THREE.Group;
   groups: THREE.Group[];
+  teamMarker: THREE.Mesh | null;
   dispose(): void;
 }
 
-export function buildCreatureMesh(creature: Creature): CreatureMesh {
+/** チームの色(バトルで2体を見分ける印に使う) */
+export const TEAM_COLORS = [0x56ccf2, 0xff8a3d];
+
+export interface CreatureMeshOptions {
+  /** 半透明で表示する(ゴースト) */
+  ghost?: boolean;
+  /** チームの印をコアの上に出す(0 または 1) */
+  team?: number;
+}
+
+export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions = {}): CreatureMesh {
   const root = new THREE.Group();
   const groups = creature.bodies.map(() => {
     const g = new THREE.Group();
@@ -33,7 +44,13 @@ export function buildCreatureMesh(creature: Creature): CreatureMesh {
   const material = (type: BlockType) => {
     let m = materials.get(type);
     if (!m) {
-      m = new THREE.MeshStandardMaterial({ color: BLOCK_COLORS[type], roughness: 0.6 });
+      m = new THREE.MeshStandardMaterial({
+        color: BLOCK_COLORS[type],
+        roughness: 0.6,
+        transparent: opts.ghost ?? false,
+        opacity: opts.ghost ? 0.22 : 1,
+        depthWrite: !opts.ghost,
+      });
       materials.set(type, m);
     }
     return m;
@@ -42,7 +59,7 @@ export function buildCreatureMesh(creature: Creature): CreatureMesh {
   creature.blueprint.blocks.forEach((b, i) => {
     const mesh = new THREE.Mesh(geometry, material(b.type));
     mesh.position.set(...creature.localOffsets[i]);
-    mesh.castShadow = true;
+    mesh.castShadow = !opts.ghost;
     groups[creature.segmentOf[i]].add(mesh);
   });
 
@@ -53,12 +70,25 @@ export function buildCreatureMesh(creature: Creature): CreatureMesh {
   mark.position.set(0, size * 0.15, size / 2 + 0.01);
   groups[0].add(mark);
 
+  // チームの印:コアの上に浮かぶ逆三角形(向きに関係なく真上に出すため、root 直下に置いて毎フレーム位置を合わせる)
+  let teamMarker: THREE.Mesh | null = null;
+  if (opts.team !== undefined) {
+    teamMarker = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.22, 4), new THREE.MeshBasicMaterial({ color: TEAM_COLORS[opts.team] }));
+    teamMarker.rotation.x = Math.PI;
+    root.add(teamMarker);
+  }
+
   return {
+    teamMarker,
     root,
     groups,
     dispose() {
       geometry.dispose();
       markGeometry.dispose();
+      if (teamMarker) {
+        teamMarker.geometry.dispose();
+        (teamMarker.material as THREE.Material).dispose();
+      }
       markMaterial.dispose();
       for (const m of materials.values()) m.dispose();
     },
@@ -72,4 +102,8 @@ export function syncCreatureMesh(creature: Creature, mesh: CreatureMesh): void {
     mesh.groups[i].position.set(t.x, t.y, t.z);
     mesh.groups[i].quaternion.set(r.x, r.y, r.z, r.w);
   });
+  if (mesh.teamMarker) {
+    const t = creature.bodies[0].translation();
+    mesh.teamMarker.position.set(t.x, t.y + 0.75, t.z);
+  }
 }

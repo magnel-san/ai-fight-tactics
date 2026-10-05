@@ -10,7 +10,8 @@ import { SAMPLES } from '../src/core/creature/samples';
 import { Rng } from '../src/core/math/rng';
 import { initRapier } from '../src/core/physics/rapier';
 import { GeneticAlgorithm } from '../src/core/training/ga';
-import { MoveEpisode, evaluateMove } from '../src/core/training/move';
+import { MoveEpisode } from '../src/core/training/move';
+import { TASKS, evaluate, type TaskSetup } from '../src/core/training/tasks';
 
 const name = process.argv[2] ?? 'quadruped';
 const maxGenerations = Number(process.argv[3] ?? 150);
@@ -22,6 +23,11 @@ if (!bp) throw new Error(`サンプルがありません:${name}(${Object.keys(S
 const R = await initRapier();
 const rng = new Rng(seed);
 const ga = new GeneticAlgorithm(createMotorGenome(jointCount(bp), rng.fork()), rng.nextU32());
+const setupOf = (): TaskSetup => ({ blueprint: bp, motor: null, decision: null, level: 3, opponent: null });
+const evaluateMove = (g: Float64Array, s: number[]) => {
+  const r = evaluate(R, TASKS.move, setupOf(), g, s);
+  return { fitness: r.fitness, reachedCount: r.successCount };
+};
 const workers = Math.min(TRAINING.workersMax, Math.max(TRAINING.workersMin, availableParallelism() - 2));
 
 /** 全周を36等分した方向で評価し、正面・横・後ろ別の到達数を返す */
@@ -30,7 +36,7 @@ function directionCheck(genome: Float64Array): string {
   const reached: boolean[] = [];
   for (let i = 0; i < n; i++) {
     const ep = new MoveEpisode(R, bp, genome, rng.nextU32(), { index: i, count: n });
-    reached.push(ep.run().reached);
+    reached.push(ep.run().success);
     ep.free();
   }
   // index i の方向は、正面から見て -180° + (i + 0.5) × 360°/n 付近
@@ -54,7 +60,7 @@ let passedAt: number | null = null;
 for (let gen = 0; gen < maxGenerations; gen++) {
   const t0 = performance.now();
   const seeds = Array.from({ length: TRAINING.episodesPerGeneration }, () => rng.nextU32());
-  const results = ga.population.map((g) => evaluateMove(R, bp, g, seeds));
+  const results = ga.population.map((g) => evaluateMove(g, seeds));
   const stats = ga.tell(results.map((r) => r.fitness));
   const best = results[stats.bestIndex];
   const champion = ga.population[0];
@@ -70,7 +76,7 @@ for (let gen = 0; gen < maxGenerations; gen++) {
   if (best.reachedCount >= MOVE_TASK.passCount) {
     // ゲームと同じ合格確認(新しいシードで9方向)
     const confirmSeeds = Array.from({ length: MOVE_TASK.confirmEpisodes }, () => rng.nextU32());
-    const { reachedCount } = evaluateMove(R, bp, champion, confirmSeeds);
+    const { reachedCount } = evaluateMove(champion, confirmSeeds);
     const ok = reachedCount >= MOVE_TASK.confirmPassCount;
     console.log(`  → 合格確認 ${reachedCount}/${MOVE_TASK.confirmEpisodes} ${ok ? '合格' : '不合格'}`);
     if (ok && passedAt === null) {

@@ -7,7 +7,8 @@ import { QUADRUPED } from '../src/core/creature/samples';
 import { Rng } from '../src/core/math/rng';
 import { initRapier, type Rapier } from '../src/core/physics/rapier';
 import { GeneticAlgorithm } from '../src/core/training/ga';
-import { MoveEpisode, evaluateMove } from '../src/core/training/move';
+import { MoveEpisode } from '../src/core/training/move';
+import { TASKS, evaluate } from '../src/core/training/tasks';
 
 describe('float16', () => {
   it('代表的な値のビット列', () => {
@@ -166,8 +167,9 @@ describe('トレーニング「目標地点への移動」', () => {
 
   it('同じ遺伝子・同じシードなら結果が完全に一致する', () => {
     const g = createMotorGenome(4, new Rng(11));
-    const a = evaluateMove(R, QUADRUPED, g, [1, 2, 3]);
-    const b = evaluateMove(R, QUADRUPED, g, [1, 2, 3]);
+    const setup = { blueprint: QUADRUPED, motor: null, decision: null, level: 3, opponent: null };
+    const a = evaluate(R, TASKS.move, setup, g, [1, 2, 3]);
+    const b = evaluate(R, TASKS.move, setup, g, [1, 2, 3]);
     expect(a).toEqual(b);
     expect(a).toMatchSnapshot();
   });
@@ -176,7 +178,7 @@ describe('トレーニング「目標地点への移動」', () => {
     const g = createMotorGenome(4, new Rng(11));
     for (let i = 0; i < 3; i++) {
       const ep = new MoveEpisode(R, QUADRUPED, g, 100 + i, { index: i, count: 3 });
-      const d = Math.hypot(ep.target.x, ep.target.z);
+      const d = Math.hypot(ep.target!.x, ep.target!.z);
       expect(d).toBeGreaterThanOrEqual(4);
       expect(d).toBeLessThanOrEqual(6);
       ep.free();
@@ -188,7 +190,7 @@ describe('トレーニング「目標地点への移動」', () => {
     const ep = new MoveEpisode(R, QUADRUPED, g, 1);
     const r = ep.run();
     ep.free();
-    expect(r.reached).toBe(false);
+    expect(r.success).toBe(false);
     expect(r.time).toBeGreaterThanOrEqual(15);
     expect(r.time).toBeLessThan(15.2);
   });

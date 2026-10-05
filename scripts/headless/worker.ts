@@ -1,12 +1,12 @@
-// 学習用Worker。個体(遺伝子)を受け取って評価し、結果だけを返す。描画はしない。
-import { initRapier } from '../core/physics/rapier';
-import { TASKS, evaluate } from '../core/training/tasks';
-import type { WorkerRequest, WorkerResponse } from './protocol';
+// Node 用の学習Worker(worker_threads)。ブラウザの training.worker.ts と同じ処理をする。
+import { parentPort } from 'node:worker_threads';
+import { initRapier } from '../../src/core/physics/rapier';
+import { TASKS, evaluate } from '../../src/core/training/tasks';
+import type { WorkerRequest, WorkerResponse } from '../../src/workers/protocol';
 
 const rapier = initRapier();
 
-self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
-  const req = e.data;
+parentPort!.on('message', async (req: WorkerRequest) => {
   try {
     const R = await rapier;
     const task = TASKS[req.task];
@@ -22,8 +22,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       });
       res = { type: 'confirm', jobId: req.jobId, outcomes };
     }
-    self.postMessage(res);
+    parentPort!.postMessage(res);
   } catch (err) {
-    self.postMessage({ type: 'error', jobId: req.jobId, message: String(err) } satisfies WorkerResponse);
+    parentPort!.postMessage({ type: 'error', jobId: req.jobId, message: String(err) } satisfies WorkerResponse);
   }
-};
+});
