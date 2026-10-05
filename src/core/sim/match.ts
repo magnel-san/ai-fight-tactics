@@ -2,6 +2,7 @@
 // 本番のバトル、トレーニング「生き残り」(1体)、「押し合い」(2体)で共通に使う。
 // 報酬はトレーニング用で、0番のキャラ(鍛えている側)から見た値。
 import { DecisionBrain, footing, rushCommand } from '../brain/decision';
+import type { MotorCommand } from '../brain/motor';
 import { BATTLE, PHYSICS, PUSH_TASK, STAGE, SURVIVE_TASK } from '../config';
 import { atan2 } from '../math/fmath';
 import { Rng } from '../math/rng';
@@ -53,6 +54,8 @@ export class MatchEpisode extends EpisodeBase {
   private causes: (FallCause | null)[];
   private lastContact = -Infinity;
   private prevPush = 0;
+  /** 外から指令を与える(手書きのルールのBOTや検証用)。null を返したキャラは通常どおり判断する */
+  externalCommand: ((i: number, f: Fighter) => MotorCommand | null) | null = null;
 
   constructor(R: Rapier, opts: MatchOptions) {
     super(R);
@@ -193,7 +196,9 @@ export class MatchEpisode extends EpisodeBase {
       if (f.out) return;
       const opponent = this.fighters.length === 2 ? this.fighters[1 - i] : null;
       const brain = this.brains[i];
-      if (brain) f.command = brain.think({ self: f, opponent, stage, time: t });
+      const external = this.externalCommand?.(i, f) ?? null;
+      if (external) f.command = external;
+      else if (brain) f.command = brain.think({ self: f, opponent, stage, time: t });
       else if (this.options.fighters[i].controller === 'rush') f.command = rushCommand(f, opponent);
       f.drive(t, footing(stage, f));
     });
