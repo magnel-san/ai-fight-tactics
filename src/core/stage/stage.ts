@@ -42,7 +42,8 @@ export class Stage {
   safeRadius: number;
   /** ステージの経過時間 [s] */
   time = 0;
-  private index = new Map<string, number>();
+  /** (q, r) → タイル番号の表(文字列のキーを作らずに引けるよう、整数の添字で持つ。なければ -1) */
+  private index: Int16Array;
   private rng: Rng;
   private pace: number;
   private nextRandomAt: number;
@@ -56,6 +57,8 @@ export class Stage {
     this.rng = new Rng(seed);
     this.pace = opts.pace ?? 1;
 
+    const span = 2 * STAGE.radius + 1;
+    this.index = new Int16Array(span * span).fill(-1);
     const body = world.createRigidBody(R.RigidBodyDesc.fixed());
     const holes = new Set((opts.holes ?? []).map(hexKey));
     const shape = hexPrismPoints(this.size, STAGE.tileHeight);
@@ -67,7 +70,7 @@ export class Stage {
         const desc = R.ColliderDesc.convexHull(shape)!.setTranslation(x, 0, z).setFriction(STAGE.tileFriction);
         collider = world.createCollider(desc, body);
       }
-      this.index.set(hexKey(h), this.tiles.length);
+      this.index[this.slot(h.q, h.r)] = this.tiles.length;
       this.tiles.push({ ...h, x, z, state: hole ? 'collapsed' : 'safe', warnTime: 0, stay: 0, collapsedAt: hole ? -Infinity : 0, collider });
     }
 
@@ -79,9 +82,17 @@ export class Stage {
     this.nextRandomAt = STAGE.randomStart;
   }
 
+  private slot(q: number, r: number): number {
+    const R = STAGE.radius;
+    if (q < -R || q > R || r < -R || r > R) return -1;
+    return (q + R) * (2 * R + 1) + (r + R);
+  }
+
   tileAt(x: number, z: number): Tile | undefined {
-    const i = this.index.get(hexKey(worldToHex(x, z, this.size)));
-    return i === undefined ? undefined : this.tiles[i];
+    const h = worldToHex(x, z, this.size);
+    const s = this.slot(h.q, h.r);
+    const i = s < 0 ? -1 : this.index[s];
+    return i < 0 ? undefined : this.tiles[i];
   }
 
   /** その位置に足場がないか(ステージの外・崩落したタイル) */
