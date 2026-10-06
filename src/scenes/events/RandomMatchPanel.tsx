@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import type { Character } from '../../core/character';
 import { RANKED } from '../../core/config';
 import type { Rapier } from '../../core/physics/rapier';
-import { monsterKey, randomMatchSeed, type EntryVersion, type PlayerStats, type RankedOutcome } from '../../core/ranked/tournament';
+import { monsterGroups, randomMatchSeed, type EntryVersion, type PlayerStats, type RankedOutcome } from '../../core/ranked/tournament';
 import { MatchEpisode } from '../../core/sim/match';
 import * as api from '../../online/ranked';
 import { TEAM_COLORS } from '../../render/creatureMesh';
@@ -91,8 +91,9 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
     return <p className="message">ランダムマッチを使うには、オンライン機能の設定が必要です(docs/ONLINE.md)。</p>;
   }
 
-  const myKey = me ? monsterKey({ owner: me, monster: charId, name: character.name }) : null;
-  const stats = api.randomStats(matches, results);
+  const groups = monsterGroups(versions);
+  const myKey = me ? (groups.find(me, charId, character.name) ?? null) : null;
+  const stats = api.randomStats(matches, results, groups);
   const mine: PlayerStats | undefined = myKey ? stats.get(myKey) : undefined;
   const rating = (s: PlayerStats | undefined) => Math.round(s?.rating ?? RANKED.initialRating);
   const entryById = new Map(versions.map((v) => [v.id, v]));
@@ -101,14 +102,16 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
     return e ? `${e.name}(${players.get(e.owner) ?? '名無し'})` : '?';
   };
   const resultById = new Map(results.map((r) => [r.matchId, r]));
-  const myMatches = myKey ? matches.filter((m) => m.aMonster === myKey || m.bMonster === myKey).reverse() : [];
+  /** 試合のそれぞれの側が、どのモンスターか */
+  const sideKey = (entry: number, serverKey: string) => groups.keyOf.get(entry) ?? groups.byServerKey.get(serverKey);
+  const myMatches = myKey ? matches.filter((m) => sideKey(m.a, m.aMonster) === myKey || sideKey(m.b, m.bMonster) === myKey).reverse() : [];
   const ready = eligible && !!character.motor && !!character.decision;
 
   const start = () =>
     run(async () => {
       const R = rapier();
       const v = viewer();
-      if (!R || !v || !myKey) return;
+      if (!R || !v || !me) return;
       const before = rating(mine);
       const match = await api.startRandomMatch(character, charId);
       if (!match) {
@@ -123,7 +126,10 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
       const outcome = await api.computeMatch(fa, fb, randomMatchSeed(match.id));
       await api.reportRandomResult(match.id, outcome);
       const { v: vs, p, m, r } = await refresh();
-      const after = rating(api.randomStats(m, r).get(myKey));
+      // いまのキャラの版が登録されたので、まとめ直してからレートを見る
+      const g = monsterGroups(vs);
+      const key = g.find(me!, charId, character.name);
+      const after = key ? rating(api.randomStats(m, r, g).get(key)) : before;
       // 計算したのと同じ試合を画面で再生する
       const oe = vs.find((x) => x.id === match.b);
       const opponent = oe ? `${oe.name}(${p.find((x) => x.id === oe.owner)?.name ?? '名無し'})` : '相手';
@@ -207,7 +213,7 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
           <ol className="ranking">
             {myMatches.slice(0, 10).map((m) => {
               const r = resultById.get(m.id);
-              const side = m.aMonster === myKey ? 0 : 1;
+              const side = sideKey(m.a, m.aMonster) === myKey ? 0 : 1;
               const opp = side === 0 ? m.b : m.a;
               // 再生中の試合の結果は、再生が終わるまで出さない
               const hide = current && !current.shown && m.id === myMatches[0].id;

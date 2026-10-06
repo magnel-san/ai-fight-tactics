@@ -13,6 +13,7 @@ import {
   computeStats,
   entrantsFor,
   matchSlotStart,
+  monsterGroups,
   monsterKey,
   randomMatchSeed,
   tournamentAt,
@@ -144,6 +145,40 @@ describe('レート', () => {
     expect(s.get('P:c3')!.losses).toBe(1);
     expect(s.get('Q:c2')!.wins).toBe(1);
     expect(s.get('Q:c2')!.losses).toBe(1);
+  });
+
+  it('同じプレイヤーの、キャラの id か名前が同じ版は同じモンスターとして記録を引き継ぐ', () => {
+    const e = (id: number, owner: string, name: string, monster: string): EntryVersion => ({ id, owner, name, monster, tournament: true, createdAt: id });
+    const versions = [
+      // id のない古い登録と、あとから id つきで登録し直した同じキャラ
+      e(1, 'P', 'トライデント', ''),
+      e(5, 'P', 'トライデント', 'c9'),
+      // 同じキャラの名前を変えた
+      e(7, 'P', 'トライデント改', 'c9'),
+      // 別のキャラ
+      e(8, 'P', 'ほかのキャラ', 'c2'),
+      // 別のプレイヤーの同じ名前のキャラ
+      e(9, 'Q', 'トライデント', 'c9'),
+    ];
+    const g = monsterGroups(versions);
+    expect(g.keyOf.get(5)).toBe(g.keyOf.get(1));
+    expect(g.keyOf.get(7)).toBe(g.keyOf.get(1));
+    expect(g.keyOf.get(8)).not.toBe(g.keyOf.get(1));
+    expect(g.keyOf.get(9)).not.toBe(g.keyOf.get(1));
+    expect(g.find('P', 'c9', '新しい名前')).toBe(g.keyOf.get(1));
+    expect(g.find('P', 'zz', 'トライデント')).toBe(g.keyOf.get(1));
+    expect(g.find('P', 'zz', '未登録')).toBeUndefined();
+    // 古い版で勝った記録と、新しい版で負けた記録が同じモンスターに足される
+    const s = computeStats(
+      [
+        { tournament: 1, match: 0, a: 1, b: 9, winner: 0, cause: 'pushed' },
+        { tournament: 2, match: 0, a: 5, b: 9, winner: 1, cause: 'fell' },
+      ],
+      (id) => g.keyOf.get(id),
+    );
+    const mine = s.get(g.keyOf.get(1)!)!;
+    expect(mine.wins).toBe(1);
+    expect(mine.losses).toBe(1);
   });
 
   it('ランダムマッチのレートは試合の順に計算し、トーナメントとは別', () => {

@@ -4,7 +4,15 @@
 import type { Character } from '../core/character';
 import { characterToJson, parseCharacter } from '../core/codec';
 import type { RaceRecord } from '../core/ranked/run';
-import { computeRatings, randomMatchSeed, type EntryVersion, type PlayerStats, type RankedOutcome, type RankedResultRow } from '../core/ranked/tournament';
+import {
+  computeRatings,
+  randomMatchSeed,
+  type EntryVersion,
+  type MonsterGroups,
+  type PlayerStats,
+  type RankedOutcome,
+  type RankedResultRow,
+} from '../core/ranked/tournament';
 import type { FighterData } from '../core/training/tasks';
 import type { RankedRequest, RankedResponse } from '../workers/ranked.worker';
 import { getSetting, setSetting } from '../storage/db';
@@ -166,13 +174,16 @@ export async function reportRandomResult(matchId: number, o: RankedOutcome): Pro
 }
 
 /** ランダムマッチのレートと勝敗(試合の順に計算する。正式な結果が出た試合だけ) */
-export function randomStats(matches: readonly RandomMatch[], results: readonly RandomResult[]): Map<string, PlayerStats> {
+export function randomStats(matches: readonly RandomMatch[], results: readonly RandomResult[], groups: MonsterGroups): Map<string, PlayerStats> {
   const byId = new Map(results.map((r) => [r.matchId, r]));
   const games = [...matches]
     .sort((x, y) => x.id - y.id)
     .flatMap((m) => {
       const r = byId.get(m.id);
-      return r ? [{ a: m.aMonster, b: m.bMonster, winner: r.winner, cause: r.cause }] : [];
+      // 試合に記録されたモンスター(サーバーの識別子)を、まとめたモンスターに置き換える
+      const a = groups.keyOf.get(m.a) ?? groups.byServerKey.get(m.aMonster);
+      const b = groups.keyOf.get(m.b) ?? groups.byServerKey.get(m.bMonster);
+      return r ? [{ a, b, winner: r.winner, cause: r.cause }] : [];
     });
   return computeRatings(games);
 }

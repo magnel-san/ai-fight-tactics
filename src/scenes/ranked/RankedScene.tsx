@@ -9,7 +9,7 @@ import type { RaceRecord } from '../../core/ranked/run';
 import {
   bracketFor,
   computeStats,
-  monsterKey,
+  monsterGroups,
   entrantsFor,
   matchSeed,
   matchSlotStart,
@@ -387,15 +387,17 @@ export function RankedScene({ charId, character, active }: Props) {
     }
     return m;
   }, [versions]);
+  // 同じプレイヤーの、キャラの id か名前が同じ版は同じモンスター(記録とレートを引き継ぐ)
+  const groups = useMemo(() => monsterGroups(versions), [versions]);
   const latestByMonster = useMemo(() => {
     const m = new Map<string, EntryVersion>();
     for (const v of versions) {
-      const k = monsterKey(v);
+      const k = groups.keyOf.get(v.id)!;
       const cur = m.get(k);
       if (!cur || v.id > cur.id) m.set(k, v);
     }
     return m;
-  }, [versions]);
+  }, [versions, groups]);
 
   const now = Date.now();
   const playerName = (owner: string) => players.get(owner) ?? '名無し';
@@ -411,10 +413,9 @@ export function RankedScene({ charId, character, active }: Props) {
     }
   }
   const visible = merged.filter((r) => matchSlotStart(r.tournament, r.match) + slotMs <= now);
-  const keyOfEntry = new Map(versions.map((v) => [v.id, monsterKey(v)]));
-  const tournamentStats = computeStats(visible, (id) => keyOfEntry.get(id));
-  const randomStatsMap = api.randomStats(randomMatches, randomResults);
-  const currentKeys = new Set([...latestByOwner.values()].map(monsterKey));
+  const tournamentStats = computeStats(visible, (id) => groups.keyOf.get(id));
+  const randomStatsMap = api.randomStats(randomMatches, randomResults, groups);
+  const currentKeys = new Set([...latestByOwner.values()].map((v) => groups.keyOf.get(v.id)!));
   // トーナメント:一度でも試合をしたモンスターと、いま出場登録しているモンスター。ランダムマッチ:試合をしたモンスター
   const stats = division === 'tournament' ? tournamentStats : randomStatsMap;
   const keys = division === 'tournament' ? new Set([...tournamentStats.keys(), ...currentKeys]) : new Set(randomStatsMap.keys());
