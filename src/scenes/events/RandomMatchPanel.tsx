@@ -1,0 +1,213 @@
+// 種目「ランダムマッチ」:サーバーがまだ戦っていない相手を選び、自動で1対1のバトルをする。
+// 同じ2体は1回だけ戦える。結果はランダムマッチのレート(トーナメントとは別)に反映される。
+// 試合は Worker で計算してすぐ報告し、その試合を画面で再生する(結果は再生が終わるまで隠す)。
+import { useEffect, useState } from 'react';
+import type { Character } from '../../core/character';
+import { RANKED } from '../../core/config';
+import type { Rapier } from '../../core/physics/rapier';
+import { monsterKey, randomMatchSeed, type EntryVersion, type PlayerStats, type RankedOutcome } from '../../core/ranked/tournament';
+import { MatchEpisode } from '../../core/sim/match';
+import * as api from '../../online/ranked';
+import { TEAM_COLORS } from '../../render/creatureMesh';
+import type { EpisodeViewer } from '../../render/EpisodeViewer';
+
+interface Props {
+  charId: string;
+  character: Character;
+  /** 種目に参加できる(「対象を追う」に合格している)か */
+  eligible: boolean;
+  viewer: () => EpisodeViewer | null;
+  rapier: () => Rapier | null;
+}
+
+interface Current {
+  opponent: string;
+  outcome: RankedOutcome;
+  /** 再生が終わったか */
+  shown: boolean;
+  before: number;
+  after: number | null;
+}
+
+const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+
+const resultText = (o: RankedOutcome) =>
+  o.winner === null
+    ? '引き分け'
+    : o.winner === 0
+      ? o.cause === 'pushed'
+        ? '押し出して勝ち'
+        : '勝ち(相手の自滅)'
+      : o.cause === 'pushed'
+        ? '押し出されて負け'
+        : '負け(自滅)';
+
+export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }: Props) {
+  const [me, setMe] = useState<string | null>(null);
+  const [myName, setMyName] = useState<string | null>(null);
+  const [nameInput, setNameInput] = useState('');
+  const [versions, setVersions] = useState<EntryVersion[]>([]);
+  const [players, setPlayers] = useState<Map<string, string>>(new Map());
+  const [matches, setMatches] = useState<api.RandomMatch[]>([]);
+  const [results, setResults] = useState<api.RandomResult[]>([]);
+  const [current, setCurrent] = useState<Current | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+
+  const refresh = async () => {
+    const [v, p, m, r] = await Promise.all([api.listEntryVersions(), api.listPlayers(), api.listRandomMatches(), api.fetchRandomResults()]);
+    setVersions(v);
+    setPlayers(new Map(p.map((x) => [x.id, x.name])));
+    setMatches(m);
+    setResults(r);
+    return { v, p, m, r };
+  };
+
+  const run = async (f: () => Promise<void>) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await f();
+    } catch (e) {
+      setMessage({ text: (e as Error).message, error: true });
+    }
+    setBusy(false);
+  };
+
+  useEffect(() => {
+    if (!api.onlineConfigured) return;
+    void run(async () => {
+      const { id, player } = await api.myPlayer();
+      setMe(id);
+      setMyName(player?.name ?? null);
+      setNameInput(player?.name ?? '');
+      await refresh();
+    });
+  }, []);
+
+  if (!api.onlineConfigured) {
+    return <p className="message">ランダムマッチを使うには、オンライン機能の設定が必要です(docs/ONLINE.md)。</p>;
+  }
+
+  const myKey = me ? monsterKey({ owner: me, monster: charId, name: character.name }) : null;
+  const stats = api.randomStats(matches, results);
+  const mine: PlayerStats | undefined = myKey ? stats.get(myKey) : undefined;
+  const rating = (s: PlayerStats | undefined) => Math.round(s?.rating ?? RANKED.initialRating);
+  const entryById = new Map(versions.map((v) => [v.id, v]));
+  const nameOf = (id: number) => {
+    const e = entryById.get(id);
+    return e ? `${e.name}(${players.get(e.owner) ?? '名無し'})` : '?';
+  };
+  const resultById = new Map(results.map((r) => [r.matchId, r]));
+  const myMatches = myKey ? matches.filter((m) => m.aMonster === myKey || m.bMonster === myKey).reverse() : [];
+  const ready = eligible && !!character.motor && !!character.decision;
+
+  const start = () =>
+    run(async () => {
+      const R = rapier();
+      const v = viewer();
+      if (!R || !v || !myKey) return;
+      const before = rating(mine);
+      const match = await api.startRandomMatch(character, charId);
+      if (!match) {
+        setMessage({ text: 'まだ戦っていない相手がいません。ほかのプレイヤーの登録を待ちましょう', error: false });
+        return;
+      }
+      const f = await api.entryFighters([match.a, match.b]);
+      const fa = f.get(match.a);
+      const fb = f.get(match.b);
+      if (!fa || !fb) throw new Error('相手のデータを読めませんでした');
+      // 先に計算して報告する(再生の途中で画面を閉じても、結果は残る)
+      const outcome = await api.computeMatch(fa, fb, randomMatchSeed(match.id));
+      await api.reportRandomResult(match.id, outcome);
+      const { v: vs, p, m, r } = await refresh();
+      const after = rating(api.randomStats(m, r).get(myKey));
+      // 計算したのと同じ試合を画面で再生する
+      const oe = vs.find((x) => x.id === match.b);
+      const opponent = oe ? `${oe.name}(${p.find((x) => x.id === oe.owner)?.name ?? '名無し'})` : '相手';
+      setCurrent({ opponent, outcome, shown: false, before, after });
+      const ep = new MatchEpisode(R, { mode: 'battle', seed: randomMatchSeed(match.id), fighters: [fa, fb] });
+      v.onFrame = (e) => {
+        if ((e as MatchEpisode).done) setCurrent((c) => (c && !c.shown ? { ...c, shown: true } : c));
+      };
+      v.setEpisodes(ep);
+    });
+
+  return (
+    <>
+      <p className="muted small">
+        サーバーが、まだ戦っていない相手を自動で選んで1対1のバトルをします。同じ相手とは1回だけ戦えます。結果は「ランダムマッチ」のレート(トーナメントとは別)に反映され、ランクマッチ画面のランキングで見られます。
+      </p>
+      {!myName && (
+        <>
+          <h3>プレイヤー名</h3>
+          <input type="text" maxLength={20} value={nameInput} placeholder="20文字まで" onChange={(e) => setNameInput(e.target.value)} />
+          <div className="row">
+            <button
+              disabled={busy || !me}
+              onClick={() =>
+                run(async () => {
+                  await api.savePlayerName(nameInput);
+                  setMyName(nameInput.trim());
+                })
+              }
+            >
+              名前を登録
+            </button>
+          </div>
+        </>
+      )}
+      <div className="vs">
+        <div className="vs-name" style={{ borderColor: hex(TEAM_COLORS[0]) }}>
+          {character.name}
+        </div>
+        <div className="muted small">
+          {current && !current.shown
+            ? `ランダムマッチのレート ${current.before}(対戦中)`
+            : `ランダムマッチのレート ${rating(mine)}・${mine ? `${mine.wins}勝${mine.losses}敗${mine.draws ? `${mine.draws}分` : ''}` : 'まだ試合なし'}`}
+        </div>
+      </div>
+      <div className="row">
+        <button className="primary" disabled={busy || !ready || !myName} onClick={start}>
+          {busy ? '準備中…' : '相手を探して対戦'}
+        </button>
+      </div>
+      {eligible && !(character.motor && character.decision) && <p className="message">ランダムマッチは判断脳も鍛えたキャラだけ出られます</p>}
+      {current && (
+        <div className={`result ${current.shown ? (current.outcome.winner === 0 ? 'win' : current.outcome.winner === 1 ? 'lose' : 'draw') : ''}`}>
+          <div className="result-title">{current.shown ? resultText(current.outcome) : '対戦中…'}</div>
+          <div className="result-detail">
+            相手:<span style={{ color: hex(TEAM_COLORS[1]) }}>{current.opponent}</span>
+            {current.shown && current.after !== null && (
+              <>
+                <br />
+                レート {current.before} → {current.after}({current.after - current.before >= 0 ? '+' : ''}
+                {current.after - current.before})
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {message && <p className={message.error ? 'message error' : 'message'}>{message.text}</p>}
+      {myMatches.length > 0 && (
+        <>
+          <h3>このキャラの対戦</h3>
+          <ol className="ranking">
+            {myMatches.slice(0, 10).map((m) => {
+              const r = resultById.get(m.id);
+              const side = m.aMonster === myKey ? 0 : 1;
+              const opp = side === 0 ? m.b : m.a;
+              // 再生中の試合の結果は、再生が終わるまで出さない
+              const hide = current && !current.shown && m.id === myMatches[0].id;
+              return (
+                <li key={m.id}>
+                  {nameOf(opp)}:{!r || hide ? '集計中' : r.winner === null ? '引き分け' : r.winner === side ? '勝ち' : '負け'}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
+    </>
+  );
+}

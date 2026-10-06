@@ -4,6 +4,7 @@
 //   ・出場者は、開始時刻より前に登録された各プレイヤーの最新の版。多ければシードで抽選する
 //   ・組み合わせはシードで並べた勝ち抜き戦。人数が2の累乗でなければ不戦勝をつくる
 //   ・試合は1つずつ、RANKED.slot 秒ごとの枠で行う。引き分けは、勝ち上がりを決めるためだけに判定する
+//   ・記録とレートはモンスターごと(monsterKey)。出場するモンスターを替えても、前のモンスターの記録は残る
 import { BATTLE, RANKED } from '../config';
 import { exp, log } from '../math/fmath';
 import { Rng } from '../math/rng';
@@ -16,8 +17,22 @@ export interface EntryVersion {
   id: number;
   owner: string;
   name: string;
+  /** モンスターの識別子(同じモンスターの版は同じ値。古い登録では空) */
+  monster: string;
+  /** true = トーナメントへの出場登録、false = ランダムマッチ用の控え */
+  tournament: boolean;
   /** 登録した時刻 [ms] */
   createdAt: number;
+}
+
+/** モンスターの識別子(レートの単位)。サーバーの monster_key() と同じ */
+export function monsterKey(v: Pick<EntryVersion, 'owner' | 'monster' | 'name'>): string {
+  return `${v.owner}:${v.monster || v.name}`;
+}
+
+/** ランダムマッチの試合のシード(試合の id から決まる) */
+export function randomMatchSeed(id: number): number {
+  return (Math.imul(id, 2654435761 | 0) + 97) | 0;
 }
 
 export function tournamentAt(timeMs: number): number {
@@ -33,7 +48,7 @@ export function entrantsFor(t: number, versions: readonly EntryVersion[]): Entry
   const start = tournamentStart(t);
   const latest = new Map<string, EntryVersion>();
   for (const v of versions) {
-    if (v.createdAt >= start) continue;
+    if (!v.tournament || v.createdAt >= start) continue;
     const cur = latest.get(v.owner);
     if (!cur || v.createdAt > cur.createdAt || (v.createdAt === cur.createdAt && v.id > cur.id)) latest.set(v.owner, v);
   }
@@ -181,7 +196,8 @@ export interface RankedResultRow {
 }
 
 export interface PlayerStats {
-  owner: string;
+  /** モンスターの識別子 */
+  key: string;
   rating: number;
   wins: number;
   losses: number;
@@ -191,31 +207,37 @@ export interface PlayerStats {
 }
 
 /**
- * 正式な結果から、プレイヤーごとのレートと勝敗を計算する(トーナメント・試合の順に1試合ずつ反映する)。
- * ownerOf は登録の版の id からプレイヤーを引く
+ * トーナメントの正式な結果から、モンスターごとのレートと勝敗を計算する(トーナメント・試合の順に1試合ずつ反映する)。
+ * keyOf は登録の版の id からモンスターの識別子を引く
  */
-export function computeStats(results: readonly RankedResultRow[], ownerOf: (entryId: number) => string | undefined): Map<string, PlayerStats> {
+export function computeStats(results: readonly RankedResultRow[], keyOf: (entryId: number) => string | undefined): Map<string, PlayerStats> {
+  const ordered = [...results].sort((x, y) => x.tournament - y.tournament || x.match - y.match);
+  return computeRatings(ordered.map((r) => ({ a: keyOf(r.a), b: keyOf(r.b), winner: r.winner, cause: r.cause })));
+}
+
+export interface RatedGame {
+  /** モンスターの識別子 */
+  a: string | undefined;
+  b: string | undefined;
+  winner: 0 | 1 | null;
+  cause: string | null;
+}
+
+/** 試合の順に並んだ結果から、レート(Elo)と勝敗を計算する */
+export function computeRatings(games: readonly RatedGame[]): Map<string, PlayerStats> {
   const stats = new Map<string, PlayerStats>();
-  const get = (owner: string) => {
-    let s = stats.get(owner);
+  const get = (key: string) => {
+    let s = stats.get(key);
     if (!s) {
-      s = {
-        owner,
-        rating: RANKED.initialRating,
-        wins: 0,
-        losses: 0,
-        draws: 0,
-        pushWins: 0,
-      };
-      stats.set(owner, s);
+      s = { key, rating: RANKED.initialRating, wins: 0, losses: 0, draws: 0, pushWins: 0 };
+      stats.set(key, s);
     }
     return s;
   };
-  const ordered = [...results].sort((x, y) => x.tournament - y.tournament || x.match - y.match);
   const ln10 = log(10);
-  for (const r of ordered) {
-    const oa = ownerOf(r.a);
-    const ob = ownerOf(r.b);
+  for (const r of games) {
+    const oa = r.a;
+    const ob = r.b;
     if (!oa || !ob || oa === ob) continue;
     const A = get(oa);
     const B = get(ob);

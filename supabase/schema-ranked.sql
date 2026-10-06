@@ -7,6 +7,9 @@
 --     トーナメントは開始時刻より前の最新の版で戦うので、あとから登録し直しても過去の試合は再現できる。
 --   ・トーナメントの日程・組み合わせ・試合の結果は、決定論的なシミュレーションで誰が計算しても同じになる。
 --     試合を計算したブラウザが結果を報告し(ranked_reports)、いちばん多く報告された結果を正式な結果とする(ranked_results)。
+--   ・記録とレートはモンスターごと(owner + monster)。出場するモンスターを替えても、前のモンスターの記録は残る。
+--   ・ランダムマッチ(種目の画面):サーバーがまだ戦っていない相手を選び(start_random_match)、同じ2体は1回だけ戦う。
+--     結果の報告と正式な結果のしくみはトーナメントと同じ(random_reports / random_results)。レートはトーナメントとは別。
 
 -- プレイヤー
 create table if not exists public.players (
@@ -46,6 +49,10 @@ create table if not exists public.ranked_entries (
   created_at timestamptz not null default now()
 );
 create index if not exists ranked_entries_owner_idx on public.ranked_entries (owner, created_at desc);
+-- モンスターの識別子(各ブラウザのキャラの id)。同じモンスターの版は同じ値になる
+alter table public.ranked_entries add column if not exists monster text not null default '' check (char_length(monster) <= 64);
+-- true = トーナメントへの出場登録、false = ランダムマッチ用の控え(トーナメントには出ない)
+alter table public.ranked_entries add column if not exists tournament boolean not null default true;
 
 alter table public.ranked_entries enable row level security;
 drop policy if exists "entries are readable" on public.ranked_entries;
@@ -53,12 +60,12 @@ create policy "entries are readable" on public.ranked_entries for select using (
 drop policy if exists "entries insert own" on public.ranked_entries;
 create policy "entries insert own" on public.ranked_entries for insert to authenticated with check (owner = auth.uid());
 
--- 登録し直しは1時間に10回まで(荒らし対策)
+-- 登録は1時間に20回まで(荒らし対策)
 create or replace function public.limit_ranked_entries() returns trigger
 language plpgsql as $$
 begin
-  if (select count(*) from public.ranked_entries where owner = new.owner and created_at > now() - interval '1 hour') >= 10 then
-    raise exception '登録し直しは1時間に10回までです';
+  if (select count(*) from public.ranked_entries where owner = new.owner and created_at > now() - interval '1 hour') >= 20 then
+    raise exception '登録は1時間に20回までです';
   end if;
   new.created_at = now();
   return new;
@@ -99,3 +106,101 @@ from (
   group by tournament, match, a, b, winner
 ) t
 order by tournament, match, reports desc, winner nulls last;
+
+-- ---- ランダムマッチ ----
+
+-- モンスターの識別子(レートの単位)
+create or replace function public.monster_key(e public.ranked_entries) returns text
+language sql immutable as $$
+  select e.owner::text || ':' || coalesce(nullif(e.monster, ''), e.name)
+$$;
+
+-- 試合(サーバーが相手を選んで作る。シードは id から決まる)
+create table if not exists public.random_matches (
+  id bigint generated always as identity primary key,
+  challenger uuid not null default auth.uid() references public.players (id) on delete cascade,
+  a bigint not null references public.ranked_entries (id) on delete cascade,
+  b bigint not null references public.ranked_entries (id) on delete cascade,
+  a_monster text not null,
+  b_monster text not null,
+  created_at timestamptz not null default now()
+);
+-- 同じ2体は1回だけ戦う
+create unique index if not exists random_matches_pair on public.random_matches (least(a_monster, b_monster), greatest(a_monster, b_monster));
+
+alter table public.random_matches enable row level security;
+drop policy if exists "random matches are readable" on public.random_matches;
+create policy "random matches are readable" on public.random_matches for select using (true);
+-- 直接の追加はできない(start_random_match を使う)
+
+-- 自分の登録(版)で、まだ戦っていない相手をランダムに1体選んで試合を作る。相手がいなければ何も返さない
+create or replace function public.start_random_match(entry bigint) returns setof public.random_matches
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  mine public.ranked_entries;
+  opp public.ranked_entries;
+  opp_id bigint;
+  my_key text;
+  created public.random_matches;
+begin
+  select * into mine from public.ranked_entries where id = entry and owner = me;
+  if not found then
+    raise exception '自分の登録ではありません';
+  end if;
+  if (select count(*) from public.random_matches where challenger = me and created_at > now() - interval '1 hour') >= 30 then
+    raise exception 'ランダムマッチは1時間に30回までです';
+  end if;
+  my_key := public.monster_key(mine);
+  -- ほかのプレイヤーの各モンスターの最新の版から、まだ戦っていない相手を選ぶ
+  select l.id into opp_id from (
+    select distinct on (public.monster_key(e)) e.id, public.monster_key(e) as k
+    from public.ranked_entries e
+    where e.owner <> me
+    order by public.monster_key(e), e.id desc
+  ) l
+  where not exists (
+    select 1 from public.random_matches m
+    where least(m.a_monster, m.b_monster) = least(my_key, l.k)
+      and greatest(m.a_monster, m.b_monster) = greatest(my_key, l.k)
+  )
+  order by random()
+  limit 1;
+  if opp_id is null then
+    return;
+  end if;
+  select * into opp from public.ranked_entries where id = opp_id;
+  insert into public.random_matches (challenger, a, b, a_monster, b_monster)
+    values (me, mine.id, opp.id, my_key, public.monster_key(opp))
+    returning * into created;
+  return next created;
+end $$;
+revoke all on function public.start_random_match(bigint) from public;
+grant execute on function public.start_random_match(bigint) to authenticated;
+
+-- 結果の報告(1人1試合1回)
+create table if not exists public.random_reports (
+  match_id bigint not null references public.random_matches (id) on delete cascade,
+  reporter uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  winner smallint check (winner in (0, 1)),
+  cause text check (cause in ('pushed', 'fell', 'timeout', 'both')),
+  created_at timestamptz not null default now(),
+  primary key (match_id, reporter)
+);
+
+alter table public.random_reports enable row level security;
+drop policy if exists "random reports are readable" on public.random_reports;
+create policy "random reports are readable" on public.random_reports for select using (true);
+drop policy if exists "random reports insert own" on public.random_reports;
+create policy "random reports insert own" on public.random_reports for insert to authenticated with check (reporter = auth.uid());
+
+-- 正式な結果:試合ごとに、いちばん多く報告された結果
+create or replace view public.random_results with (security_invoker = true) as
+select distinct on (match_id)
+  match_id, winner, cause, reports
+from (
+  select match_id, winner, max(cause) as cause, count(*) as reports
+  from public.random_reports
+  group by match_id, winner
+) t
+order by match_id, reports desc, winner nulls last;

@@ -7,12 +7,25 @@ import { QUADRUPED } from '../src/core/creature/samples';
 import { Rng } from '../src/core/math/rng';
 import { initRapier, type Rapier } from '../src/core/physics/rapier';
 import { raceRecord, runRankedMatch } from '../src/core/ranked/run';
-import { bracketFor, computeStats, entrantsFor, matchSlotStart, tournamentAt, tournamentStart, type EntryVersion } from '../src/core/ranked/tournament';
+import {
+  bracketFor,
+  computeRatings,
+  computeStats,
+  entrantsFor,
+  matchSlotStart,
+  monsterKey,
+  randomMatchSeed,
+  tournamentAt,
+  tournamentStart,
+  type EntryVersion,
+} from '../src/core/ranked/tournament';
 
-const v = (id: number, owner: string, createdAt: number): EntryVersion => ({
+const v = (id: number, owner: string, createdAt: number, tournament = true): EntryVersion => ({
   id,
   owner,
   name: `m${id}`,
+  monster: '',
+  tournament,
   createdAt,
 });
 
@@ -27,6 +40,8 @@ describe('トーナメントの日程と出場者', () => {
     const t = 1000;
     const start = tournamentStart(t);
     const versions = [v(1, 'A', start - 5000), v(2, 'A', start - 1000), v(3, 'B', start - 3000), v(4, 'B', start + 10), v(5, 'C', start + 5)];
+    // ランダムマッチ用の控えはトーナメントに出ない
+    versions.push(v(6, 'B', start - 2000, false), v(7, 'D', start - 2000, false));
     const e = entrantsFor(t, versions);
     expect(e.map((x) => x.id).sort()).toEqual([2, 3]);
   });
@@ -104,6 +119,42 @@ describe('レート', () => {
     const x = computeStats(rows, owner);
     const y = computeStats([...rows].reverse(), owner);
     for (const k of ['A', 'B', 'C']) expect(x.get(k)!.rating).toBe(y.get(k)!.rating);
+  });
+
+  it('記録はモンスターごと:出場するモンスターを替えても、前のモンスターの記録は残る', () => {
+    const versions: EntryVersion[] = [
+      { id: 1, owner: 'P', name: 'いぬ', monster: 'c1', tournament: true, createdAt: 0 },
+      { id: 2, owner: 'Q', name: 'ねこ', monster: 'c2', tournament: true, createdAt: 0 },
+      { id: 3, owner: 'P', name: 'とり', monster: 'c3', tournament: true, createdAt: 10 },
+      // 同じモンスターの新しい版は、同じ記録に足される
+      { id: 4, owner: 'Q', name: 'ねこ2', monster: 'c2', tournament: true, createdAt: 10 },
+    ];
+    const keyOf = (id: number) => {
+      const e = versions.find((x) => x.id === id);
+      return e && monsterKey(e);
+    };
+    const s = computeStats(
+      [
+        { tournament: 1, match: 0, a: 1, b: 2, winner: 0, cause: 'pushed' },
+        { tournament: 2, match: 0, a: 3, b: 4, winner: 1, cause: 'fell' },
+      ],
+      keyOf,
+    );
+    expect(s.get('P:c1')!.wins).toBe(1);
+    expect(s.get('P:c3')!.losses).toBe(1);
+    expect(s.get('Q:c2')!.wins).toBe(1);
+    expect(s.get('Q:c2')!.losses).toBe(1);
+  });
+
+  it('ランダムマッチのレートは試合の順に計算し、トーナメントとは別', () => {
+    const r = computeRatings([
+      { a: 'X', b: 'Y', winner: 0, cause: 'pushed' },
+      { a: 'Y', b: 'Z', winner: null, cause: 'timeout' },
+    ]);
+    expect(r.get('X')!.rating).toBeGreaterThan(RANKED.initialRating);
+    expect(r.get('Y')!.draws).toBe(1);
+    expect(randomMatchSeed(5)).toBe(randomMatchSeed(5));
+    expect(randomMatchSeed(5)).not.toBe(randomMatchSeed(6));
   });
 });
 

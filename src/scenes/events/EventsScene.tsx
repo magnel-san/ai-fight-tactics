@@ -1,4 +1,5 @@
-// 種目の画面:かけっこ(最大4体)とサッカー(3対3)。どちらも運動脳だけで動く。
+// 種目の画面:かけっこ(最大4体)とサッカー(3対3)と、オンラインのランダムマッチ(1対1のバトル)。
+// かけっことサッカーは運動脳だけで動く。
 // 参加できるのは、トレーニング「対象を追う」に合格したキャラだけ(指令の方向へまっすぐ進めないと競技にならないため)。
 // 参加するキャラは、自分のキャラと、バトルの対戦相手の一覧(BOT・保存キャラ・受け取ったキャラ)から選ぶ。
 import { useEffect, useRef, useState } from 'react';
@@ -11,15 +12,18 @@ import { TASKS, type FighterData, type TaskName } from '../../core/training/task
 import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { TEAM_COLORS } from '../../render/creatureMesh';
 import type { OpponentEntry } from '../battle/BattleScene';
+import { RandomMatchPanel } from './RandomMatchPanel';
 
 interface Props {
+  /** いまのキャラの id(ランダムマッチでモンスターの識別子にする) */
+  charId: string;
   character: Character;
   /** 参加できる相手(バトルの対戦相手の一覧と同じ) */
   entries: OpponentEntry[];
   active: boolean;
 }
 
-type Mode = 'race' | 'soccer';
+type Mode = 'race' | 'soccer' | 'random';
 const NONE = '';
 const ME = '__me__';
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
@@ -28,7 +32,7 @@ const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 /** 種目に参加するために合格が必要なトレーニング */
 export const EVENT_REQUIRED_TASK: TaskName = 'chase';
 
-export function EventsScene({ character, entries, active }: Props) {
+export function EventsScene({ charId, character, entries, active }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<EpisodeViewer | null>(null);
   const rapierRef = useRef<Rapier | null>(null);
@@ -155,12 +159,23 @@ export function EventsScene({ character, entries, active }: Props) {
             かけっこ
           </button>
           <button className={mode === 'soccer' ? 'selected' : ''} onClick={() => setMode('soccer')}>
-            サッカー(3対3)
+            サッカー
+          </button>
+          <button className={mode === 'random' ? 'selected' : ''} onClick={() => setMode('random')}>
+            ランダムマッチ
           </button>
         </div>
         {!ready && <p className="message">トレーニング「{TASKS[EVENT_REQUIRED_TASK].label}」に合格すると参加できます</p>}
 
-        {mode === 'race' ? (
+        {mode === 'random' ? (
+          <RandomMatchPanel
+            charId={charId}
+            character={character}
+            eligible={ready}
+            viewer={() => viewerRef.current}
+            rapier={() => rapierRef.current}
+          />
+        ) : mode === 'race' ? (
           <>
             <p className="muted small">
               まっすぐ {RACE.distance}m 先のゴールを目指します。ゴールまでのタイム(届かなければ進んだ距離)で順位を決めます。制限時間 {RACE.timeLimit}秒。
@@ -201,7 +216,7 @@ export function EventsScene({ character, entries, active }: Props) {
         ) : (
           <>
             <p className="muted small">
-              各キャラは自分の運動脳で動き、チームの作戦(ボールの後ろに回り込んで押す・守る・支える)で動きます。{SOCCER.timeLimit}秒で得点の多いチームの勝ち。
+              {SOCCER.teamSize}対{SOCCER.teamSize}。各キャラは自分の運動脳で動き、チームの作戦(ボールの後ろに回り込んで押す・守る・支える)で動きます。{SOCCER.timeLimit}秒で得点の多いチームの勝ち。
             </p>
             <h3 style={{ color: hex(TEAM_COLORS[0]) }}>チームA(青)</h3>
             <div className="vs">

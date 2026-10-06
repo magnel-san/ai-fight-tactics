@@ -9,6 +9,7 @@ import type { RaceRecord } from '../../core/ranked/run';
 import {
   bracketFor,
   computeStats,
+  monsterKey,
   entrantsFor,
   matchSeed,
   matchSlotStart,
@@ -25,6 +26,8 @@ import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { getSetting, setSetting } from '../../storage/db';
 
 interface Props {
+  /** いまのキャラの id(モンスターの識別子にする) */
+  charId: string;
   character: Character;
   active: boolean;
 }
@@ -47,6 +50,8 @@ interface LiveTournament {
 
 type View = 'live' | 'ranking' | 'entry';
 type SortKey = 'rating' | 'wins' | 'race';
+/** ランキングの部門:トーナメントとランダムマッチ(レートは別々) */
+type Division = 'tournament' | 'random';
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 const slotMs = RANKED.slot * 1000;
@@ -125,12 +130,15 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-export function RankedScene({ character, active }: Props) {
+export function RankedScene({ charId, character, active }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<EpisodeViewer | null>(null);
   const rapierRef = useRef<Rapier | null>(null);
   const [view, setView] = useState<View>('live');
   const [sortKey, setSortKey] = useState<SortKey>('rating');
+  const [division, setDivision] = useState<Division>('tournament');
+  const [randomMatches, setRandomMatches] = useState<api.RandomMatch[]>([]);
+  const [randomResults, setRandomResults] = useState<api.RandomResult[]>([]);
   const [started, setStarted] = useState(false);
   const [, setTick] = useState(0);
   const [versions, setVersions] = useState<EntryVersion[]>([]);
@@ -198,7 +206,13 @@ export function RankedScene({ character, active }: Props) {
           const t = tournamentAt(now);
           // 出場者を正しく決めるため、トーナメントが始まったら登録の一覧を取り直す
           if (t !== lastT || now - lastFetch > 60_000) {
-            const [v, p, r] = await Promise.all([api.listEntryVersions(), api.listPlayers(), api.fetchResults()]);
+            const [v, p, r, rm, rr] = await Promise.all([
+              api.listEntryVersions(),
+              api.listPlayers(),
+              api.fetchResults(),
+              api.listRandomMatches(),
+              api.fetchRandomResults(),
+            ]);
             vs = v;
             rs = r;
             lastFetch = now;
@@ -207,6 +221,10 @@ export function RankedScene({ character, active }: Props) {
             setVersions(v);
             setPlayers(new Map(p.map((x) => [x.id, x.name])));
             setResults(r);
+            setRandomMatches(rm);
+            setRandomResults(rr);
+            // 報告されないまま残ったランダムマッチを代わりに計算する
+            if ((await api.settlePendingRandomMatches(rm, rr)) > 0 && !cancelled) setRandomResults(await api.fetchRandomResults());
           }
           const cur = await resolveTournament(t, vs, (lt) => !cancelled && setLive(lt));
           await reportAll(cur);
@@ -287,38 +305,102 @@ export function RankedScene({ character, active }: Props) {
     return () => clearInterval(timer);
   }, [active, started]);
 
-  // ランキングを開いたら、かけっこの公式記録を測る(登録の版ごとに1回。結果はブラウザに保存する)
+  // いまのトーナメントの出場登録(プレイヤーごとの最新)と、モンスターごとの最新の版
   const latestByOwner = useMemo(() => {
     const m = new Map<string, EntryVersion>();
     for (const v of versions) {
+      if (!v.tournament) continue;
       const cur = m.get(v.owner);
       if (!cur || v.id > cur.id) m.set(v.owner, v);
     }
     return m;
   }, [versions]);
+  const latestByMonster = useMemo(() => {
+    const m = new Map<string, EntryVersion>();
+    for (const v of versions) {
+      const k = monsterKey(v);
+      const cur = m.get(k);
+      if (!cur || v.id > cur.id) m.set(k, v);
+    }
+    return m;
+  }, [versions]);
 
+  const now = Date.now();
+  const playerName = (owner: string) => players.get(owner) ?? '名無し';
+
+  // トーナメントのランキング:試合の時刻が過ぎた結果だけを数える。
+  // サーバーの結果に、このブラウザで計算した結果(まだ取り込んでいないもの)を足す
+  const merged = [...results];
+  const known = new Set(results.map((r) => `${r.tournament}:${r.match}`));
+  for (const lt of [prev, live]) {
+    for (const m of lt?.matches ?? []) {
+      if (!m.outcome || m.forfeit || !m.a || !m.b || known.has(`${lt!.t}:${m.index}`)) continue;
+      merged.push({ tournament: lt!.t, match: m.index, a: m.a.id, b: m.b.id, winner: m.outcome.winner, cause: m.outcome.cause });
+    }
+  }
+  const visible = merged.filter((r) => matchSlotStart(r.tournament, r.match) + slotMs <= now);
+  const keyOfEntry = new Map(versions.map((v) => [v.id, monsterKey(v)]));
+  const tournamentStats = computeStats(visible, (id) => keyOfEntry.get(id));
+  const randomStatsMap = api.randomStats(randomMatches, randomResults);
+  const currentKeys = new Set([...latestByOwner.values()].map(monsterKey));
+  // トーナメント:一度でも試合をしたモンスターと、いま出場登録しているモンスター。ランダムマッチ:試合をしたモンスター
+  const stats = division === 'tournament' ? tournamentStats : randomStatsMap;
+  const keys = division === 'tournament' ? new Set([...tournamentStats.keys(), ...currentKeys]) : new Set(randomStatsMap.keys());
+  const rows = [...keys].flatMap((k) => {
+    const v = latestByMonster.get(k);
+    if (!v) return [];
+    const s = stats.get(k);
+    return [
+      {
+        key: k,
+        owner: v.owner,
+        entryId: v.id,
+        player: playerName(v.owner),
+        monster: v.name,
+        current: currentKeys.has(k),
+        rating: s?.rating ?? RANKED.initialRating,
+        games: s ? s.wins + s.losses + s.draws : 0,
+        wins: s?.wins ?? 0,
+        losses: s?.losses ?? 0,
+        draws: s?.draws ?? 0,
+        pushWins: s?.pushWins ?? 0,
+        race: races.get(v.id),
+      },
+    ];
+  });
+  const raceKey = (r: RaceRecord | undefined) => (r ? (r.best !== null ? r.best : RACE.timeLimit + (RACE.distance - r.distance)) : Infinity);
+  rows.sort((x, y) =>
+    sortKey === 'rating'
+      ? y.rating - x.rating || y.wins - x.wins
+      : sortKey === 'wins'
+        ? y.wins - x.wins || y.rating - x.rating
+        : raceKey(x.race) - raceKey(y.race),
+  );
+  const raceIds = rows.map((r) => r.entryId).join(',');
+
+  // ランキングを開いたら、かけっこの公式記録を測る(登録の版ごとに1回。結果はブラウザに保存する)
   useEffect(() => {
-    if (!active || view !== 'ranking') return;
+    if (!active || view !== 'ranking' || !raceIds) return;
     let cancelled = false;
     void (async () => {
-      for (const v of latestByOwner.values()) {
+      for (const id of raceIds.split(',').map(Number)) {
         if (cancelled) return;
-        if (races.has(v.id)) continue;
-        const key = `ranked-race:${v.id}`;
+        if (races.has(id)) continue;
+        const key = `ranked-race:${id}`;
         let rec = await getSetting<RaceRecord>(key);
         if (!rec) {
-          const f = (await api.entryFighters([v.id])).get(v.id);
+          const f = (await api.entryFighters([id])).get(id);
           if (!f) continue;
-          rec = await api.computeRace(v.id, f);
+          rec = await api.computeRace(id, f);
           await setSetting(key, rec);
         }
-        if (!cancelled) setRaces((m) => new Map(m).set(v.id, rec!));
+        if (!cancelled) setRaces((m) => new Map(m).set(id, rec!));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [active, view, latestByOwner]);
+  }, [active, view, raceIds]);
 
   if (!api.onlineConfigured) {
     return (
@@ -333,52 +415,13 @@ export function RankedScene({ character, active }: Props) {
     );
   }
 
-  const now = Date.now();
   const t = tournamentAt(now);
   const slot = Math.floor((now - tournamentStart(t)) / slotMs);
   const offset = now - matchSlotStart(t, slot);
   const cur = live && live.t === t ? live : null;
   const curMatch = cur?.matches[slot];
   const nextStart = tournamentStart(t + 1);
-  const playerName = (owner: string) => players.get(owner) ?? '名無し';
   const label = (e: EntryVersion | null) => (e ? `${e.name}(${playerName(e.owner)})` : '未定');
-
-  // ランキング:試合の時刻が過ぎた結果だけを数える
-  // サーバーの結果に、このブラウザで計算した結果(まだ取り込んでいないもの)を足す
-  const merged = [...results];
-  const known = new Set(results.map((r) => `${r.tournament}:${r.match}`));
-  for (const lt of [prev, live]) {
-    for (const m of lt?.matches ?? []) {
-      if (!m.outcome || m.forfeit || !m.a || !m.b || known.has(`${lt!.t}:${m.index}`)) continue;
-      merged.push({ tournament: lt!.t, match: m.index, a: m.a.id, b: m.b.id, winner: m.outcome.winner, cause: m.outcome.cause });
-    }
-  }
-  const visible = merged.filter((r) => matchSlotStart(r.tournament, r.match) + slotMs <= now);
-  const ownerOf = new Map(versions.map((v) => [v.id, v.owner]));
-  const stats = computeStats(visible, (id) => ownerOf.get(id));
-  const rows = [...latestByOwner.values()].map((v) => {
-    const s = stats.get(v.owner);
-    return {
-      owner: v.owner,
-      player: playerName(v.owner),
-      monster: v.name,
-      rating: s?.rating ?? RANKED.initialRating,
-      games: s ? s.wins + s.losses + s.draws : 0,
-      wins: s?.wins ?? 0,
-      losses: s?.losses ?? 0,
-      draws: s?.draws ?? 0,
-      pushWins: s?.pushWins ?? 0,
-      race: races.get(v.id),
-    };
-  });
-  const raceKey = (r: RaceRecord | undefined) => (r ? (r.best !== null ? r.best : RACE.timeLimit + (RACE.distance - r.distance)) : Infinity);
-  rows.sort((x, y) =>
-    sortKey === 'rating'
-      ? y.rating - x.rating || y.wins - x.wins
-      : sortKey === 'wins'
-        ? y.wins - x.wins || y.rating - x.rating
-        : raceKey(x.race) - raceKey(y.race),
-  );
 
   const run = async (f: () => Promise<void>) => {
     setBusy(true);
@@ -539,7 +582,7 @@ export function RankedScene({ character, active }: Props) {
                 disabled={busy || !ready || !myName}
                 onClick={() =>
                   run(async () => {
-                    await api.registerRankedEntry(character);
+                    await api.registerRankedEntry(character, charId);
                     setVersions(await api.listEntryVersions());
                     setMessage({
                       text: `「${character.name}」を登録しました。次のトーナメントから出場します`,
@@ -586,10 +629,19 @@ export function RankedScene({ character, active }: Props) {
 
         {view === 'ranking' && (
           <>
+            <div className="segmented">
+              <button className={division === 'tournament' ? 'selected' : ''} onClick={() => setDivision('tournament')}>
+                トーナメント
+              </button>
+              <button className={division === 'random' ? 'selected' : ''} onClick={() => setDivision('random')}>
+                ランダムマッチ
+              </button>
+            </div>
             <p className="muted small">
-              レートは全員 {RANKED.initialRating} から始まり、ランクマッチの勝敗で上下します。かけっこは {RACE.distance}m の公式記録(決まった
-              {RANKED.raceSeeds.length}
-              回の最速)です。
+              {division === 'tournament'
+                ? '自動トーナメントのレートです。記録はモンスターごとに残り、出場するモンスターを替えても前のモンスターの記録は消えません(★ = いま出場中)。'
+                : '種目の画面の「ランダムマッチ」のレートです(トーナメントとは別)。同じ2体は1回だけ戦えます。'}
+              レートは {RANKED.initialRating} から始まります。かけっこは {RACE.distance}m の公式記録(決まった{RANKED.raceSeeds.length}回の最速)です。
             </p>
             <div className="segmented">
               {(
@@ -628,15 +680,18 @@ export function RankedScene({ character, active }: Props) {
                 {rows.length === 0 && (
                   <tr>
                     <td colSpan={7} className="muted">
-                      まだ登録がありません
+                      {division === 'tournament' ? 'まだ登録がありません' : 'まだ試合がありません'}
                     </td>
                   </tr>
                 )}
                 {rows.map((r, i) => (
-                  <tr key={r.owner} className={r.owner === me ? 'mine' : ''}>
+                  <tr key={r.key} className={r.owner === me ? 'mine' : ''}>
                     <td>{i + 1}</td>
                     <td>{r.player}</td>
-                    <td>{r.monster}</td>
+                    <td>
+                      {r.monster}
+                      {division === 'tournament' && r.current ? ' ★' : ''}
+                    </td>
                     <td>{Math.round(r.rating)}</td>
                     <td>{r.wins}</td>
                     <td className="muted small">

@@ -184,10 +184,10 @@ export function App() {
               />
             </div>
             <div className="tab-page" hidden={tab !== 'events'}>
-              <EventsScene character={character} entries={eventEntries} active={tab === 'events'} />
+              <EventsScene charId={store.activeId} character={character} entries={eventEntries} active={tab === 'events'} />
             </div>
             <div className="tab-page" hidden={tab !== 'ranked'}>
-              <RankedScene character={character} active={tab === 'ranked'} />
+              <RankedScene charId={store.activeId} character={character} active={tab === 'ranked'} />
             </div>
             <div className="tab-page scroll" hidden={tab !== 'library'}>
               <LibraryScene
