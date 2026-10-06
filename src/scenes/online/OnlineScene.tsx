@@ -4,7 +4,15 @@ import { useEffect, useState } from 'react';
 import type { Character } from '../../core/character';
 import { jointCount, totalCost } from '../../core/creature/blueprint';
 import { TASKS } from '../../core/training/tasks';
-import { myCharacters, onlineConfigured, randomOpponents, registerCharacter, unregister, type OnlineCharacter } from '../../online/client';
+import {
+  myCharacters,
+  onlineConfigured,
+  randomOpponents,
+  registerCharacter,
+  unregister,
+  type MyOnlineCharacter,
+  type OnlineCharacter,
+} from '../../online/client';
 import { getSetting, setSetting } from '../../storage/db';
 
 interface Props {
@@ -17,7 +25,9 @@ interface Props {
 }
 
 export function OnlineScene({ charId, character, active, onBattle, onAddToPool }: Props) {
-  const [mine, setMine] = useState<OnlineCharacter[]>([]);
+  const [mine, setMine] = useState<MyOnlineCharacter[]>([]);
+  /** 登録済みの一覧を取得したか(取得するのは最初に開いたときと、登録・削除のあとだけ) */
+  const [loaded, setLoaded] = useState(false);
   const [found, setFound] = useState<OnlineCharacter[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
@@ -34,7 +44,10 @@ export function OnlineScene({ charId, character, active, onBattle, onAddToPool }
   };
 
   useEffect(() => {
-    if (active && onlineConfigured) void run(async () => setMine(await myCharacters()));
+    if (active && onlineConfigured && !loaded) {
+      setLoaded(true);
+      void run(async () => setMine(await myCharacters()));
+    }
   }, [active]);
 
   if (!onlineConfigured) {

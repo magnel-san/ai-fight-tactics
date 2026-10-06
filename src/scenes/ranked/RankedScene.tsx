@@ -17,7 +17,6 @@ import {
   tournamentStart,
   type EntryVersion,
   type RankedOutcome,
-  type RankedResultRow,
 } from '../../core/ranked/tournament';
 import { MatchEpisode } from '../../core/sim/match';
 import * as api from '../../online/ranked';
@@ -108,7 +107,10 @@ async function resolveTournament(t: number, versions: readonly EntryVersion[], o
   return lt;
 }
 
-const reported = new Set<string>();
+/** 自動で取得した最後のトーナメント(画面を開き直しても、同じトーナメントの間は取得し直さない) */
+let autoSyncedT = -1;
+/** 更新ボタンを続けて押せない時間 [ms] */
+const REFRESH_COOLDOWN = 15_000;
 
 /**
  * 自分のモンスターが出た試合を、マイキャラのリプレイに保存する(試合の配信が終わってから。一度保存したら、消しても保存し直さない)
@@ -142,14 +144,11 @@ async function saveMyReplays(lt: LiveTournament, me: string, playerName: (owner:
   }
 }
 
-async function reportAll(lt: LiveTournament): Promise<void> {
-  for (const m of lt.matches) {
-    if (!m.outcome || m.forfeit || !m.a || !m.b) continue;
-    const key = `${lt.t}:${m.index}`;
-    if (reported.has(key)) continue;
-    await api.reportResult(lt.t, m.index, m.a.id, m.b.id, m.outcome);
-    reported.add(key);
-  }
+/** 計算した試合の結果(報告するもの) */
+function reportsOf(lt: LiveTournament): api.PendingReport[] {
+  return lt.matches.flatMap((m) =>
+    m.outcome && !m.forfeit && m.a && m.b ? [{ tournament: lt.t, match: m.index, a: m.a.id, b: m.b.id, outcome: m.outcome }] : [],
+  );
 }
 
 const roundName = (round: number, rounds: number) =>
@@ -170,13 +169,13 @@ export function RankedScene({ charId, character, active }: Props) {
   const [view, setView] = useState<View>('live');
   const [sortKey, setSortKey] = useState<SortKey>('rating');
   const [division, setDivision] = useState<Division>('tournament');
-  const [randomMatches, setRandomMatches] = useState<api.RandomMatch[]>([]);
-  const [randomResults, setRandomResults] = useState<api.RandomResult[]>([]);
+  // サーバーから取得してブラウザに保存している情報(取得するのは、開いたとき・トーナメントの開始・更新ボタンのときだけ)
+  const [snap, setSnap] = useState<api.RankedSnapshot>({ versions: [], players: new Map(), results: [], randomMatches: [], randomResults: [], syncedAt: 0 });
+  const { versions, players, results, randomMatches, randomResults } = snap;
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(0);
   const [started, setStarted] = useState(false);
   const [, setTick] = useState(0);
-  const [versions, setVersions] = useState<EntryVersion[]>([]);
-  const [players, setPlayers] = useState<Map<string, string>>(new Map());
-  const [results, setResults] = useState<RankedResultRow[]>([]);
   const [live, setLive] = useState<LiveTournament | null>(null);
   const [prev, setPrev] = useState<LiveTournament | null>(null);
   const [races, setRaces] = useState<Map<number, RaceRecord>>(new Map());
@@ -221,20 +220,23 @@ export function RankedScene({ charId, character, active }: Props) {
     };
   }, []);
 
-  // サーバーとのやりとりと試合の計算(画面を一度開いたら、ほかの画面にいる間も続ける)
+  // 試合の計算と結果の報告。この画面を開いていて、ブラウザのタブが見えている間だけ動かす
   useEffect(() => {
-    if (!started || !api.onlineConfigured) return;
+    if (!active || !api.onlineConfigured) return;
     let cancelled = false;
-    let lastFetch = 0;
-    let lastT = -1;
-    let vs: EntryVersion[] = [];
-    let rs: RankedResultRow[] = [];
-    let myId = '';
-    let names = new Map<string, string>();
+    const unsubscribe = api.subscribeRanked((x) => !cancelled && setSnap(x));
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const loop = async () => {
       let first = true;
+      let myId = '';
+      let s = await api.rankedSnapshot();
+      if (!cancelled) setSnap(s);
       while (!cancelled) {
         try {
+          if (document.hidden) {
+            await sleep(5000);
+            continue;
+          }
           if (first) {
             const { id, player } = await api.myPlayer();
             if (cancelled) return;
@@ -243,62 +245,64 @@ export function RankedScene({ charId, character, active }: Props) {
             if (player) setNameInput((n) => n || player.name);
             first = false;
           }
-          const now = Date.now();
-          const t = tournamentAt(now);
-          // 出場者を正しく決めるため、トーナメントが始まったら登録の一覧を取り直す
-          if (t !== lastT || now - lastFetch > 60_000) {
-            const [v, p, r, rm, rr] = await Promise.all([
-              api.listEntryVersions(),
-              api.listPlayers(),
-              api.fetchResults(),
-              api.listRandomMatches(),
-              api.fetchRandomResults(),
-            ]);
-            vs = v;
-            rs = r;
-            lastFetch = now;
-            lastT = t;
+          const t = tournamentAt(Date.now());
+          // 自動で取得するのは、この画面を初めて開いたときと、新しいトーナメントが始まったとき(出場者を決めるため)だけ
+          if (autoSyncedT !== t) {
+            s = await api.syncRanked();
+            autoSyncedT = t;
             if (cancelled) return;
-            setVersions(v);
-            names = new Map(p.map((x) => [x.id, x.name]));
-            setPlayers(names);
-            setResults(r);
-            setRandomMatches(rm);
-            setRandomResults(rr);
             // 報告されないまま残ったランダムマッチを代わりに計算する
-            if ((await api.settlePendingRandomMatches(rm, rr)) > 0 && !cancelled) setRandomResults(await api.fetchRandomResults());
+            await api.settlePendingRandomMatches(s.randomMatches, s.randomResults);
           }
+          s = await api.rankedSnapshot();
+          const vs = s.versions;
           const cur = await resolveTournament(t, vs, (lt) => !cancelled && setLive(lt));
-          await reportAll(cur);
           const last = await resolveTournament(t - 1, vs, (lt) => !cancelled && setPrev(lt));
-          await reportAll(last);
-          const nameOf = (owner: string) => names.get(owner) ?? '名無し';
-          await saveMyReplays(last, myId, nameOf);
-          await saveMyReplays(cur, myId, nameOf);
+          const pending = [...reportsOf(cur), ...reportsOf(last)];
           // 誰も計算しなかった過去のトーナメントの結果を補う
-          const have = new Set(rs.map((r) => `${r.tournament}:${r.match}`));
+          const have = new Set(s.results.map((r) => `${r.tournament}:${r.match}`));
           for (let k = 2; k <= BACKFILL && !cancelled; k++) {
             const tk = t - k;
             const n = bracketFor(entrantsFor(tk, vs).length).length;
             let missing = false;
             for (let i = 0; i < n; i++) if (!have.has(`${tk}:${i}`)) missing = true;
-            if (missing) await reportAll(await resolveTournament(tk, vs));
+            if (missing) pending.push(...reportsOf(await resolveTournament(tk, vs)));
           }
+          // 報告はまとめて1回で(報告済みの試合は送らない)
+          await api.reportResults(pending);
+          const nameOf = (owner: string) => s.players.get(owner) ?? '名無し';
+          await saveMyReplays(last, myId, nameOf);
+          await saveMyReplays(cur, myId, nameOf);
           if (!cancelled) setFatal(null);
         } catch (e) {
           // 準備ができていない・通信できないときは、少し待ってからやり直す
           if (!cancelled) setFatal((e as Error).message);
-          lastT = -1;
-          await new Promise((r) => setTimeout(r, 10_000));
+          autoSyncedT = -1;
+          await sleep(30_000);
         }
-        await new Promise((r) => setTimeout(r, 5000));
+        await sleep(5000);
       }
     };
     void loop();
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, [started]);
+  }, [active]);
+
+  /** 更新ボタン:登録・名前・結果の新しい分を取得する */
+  const refresh = async () => {
+    setRefreshing(true);
+    setLastRefresh(Date.now());
+    try {
+      const s = await api.syncRanked();
+      await api.settlePendingRandomMatches(s.randomMatches, s.randomResults);
+      setFatal(null);
+    } catch (e) {
+      setFatal((e as Error).message);
+    }
+    setRefreshing(false);
+  };
 
   // 配信:時刻に合わせて、いまの試合を途中から映す
   useEffect(() => {
@@ -653,6 +657,19 @@ export function RankedScene({ charId, character, active }: Props) {
             登録
           </button>
         </div>
+        <div className="refresh-row">
+          <span className="muted small">
+            {snap.syncedAt ? `最終更新 ${new Date(snap.syncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'まだ取得していません'}
+          </span>
+          <button
+            className="small-button"
+            disabled={refreshing || now - lastRefresh < REFRESH_COOLDOWN}
+            onClick={() => void refresh()}
+            title="新しい登録・プレイヤー名・試合の結果を取得します(トーナメントが始まるときは自動で取得します)"
+          >
+            {refreshing ? '取得中…' : '更新'}
+          </button>
+        </div>
 
         {view === 'entry' && (
           <>
@@ -664,7 +681,6 @@ export function RankedScene({ charId, character, active }: Props) {
                 onClick={() =>
                   run(async () => {
                     await api.savePlayerName(nameInput);
-                    setPlayers(new Map(players).set(me!, nameInput.trim()));
                     setMessage({
                       text: 'プレイヤー名を登録しました',
                       error: false,
@@ -686,7 +702,6 @@ export function RankedScene({ charId, character, active }: Props) {
                 onClick={() =>
                   run(async () => {
                     await api.registerRankedEntry(character, charId);
-                    setVersions(await api.listEntryVersions());
                     setMessage({
                       text: `「${character.name}」を登録しました。次のトーナメントから出場します`,
                       error: false,

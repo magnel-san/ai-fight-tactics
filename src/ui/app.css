@@ -843,3 +843,10 @@ button.small-button {
 .bracket .replay-button {
   margin-left: 8px;
 }
+.refresh-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 0 4px;
+}

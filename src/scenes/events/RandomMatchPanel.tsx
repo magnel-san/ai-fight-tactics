@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import type { Character } from '../../core/character';
 import { RANKED } from '../../core/config';
 import type { Rapier } from '../../core/physics/rapier';
-import { monsterGroups, randomMatchSeed, type EntryVersion, type PlayerStats, type RankedOutcome } from '../../core/ranked/tournament';
+import { monsterGroups, randomMatchSeed, type PlayerStats, type RankedOutcome } from '../../core/ranked/tournament';
 import { MatchEpisode } from '../../core/sim/match';
 import * as api from '../../online/ranked';
 import { TEAM_COLORS } from '../../render/creatureMesh';
@@ -31,6 +31,11 @@ interface Current {
   after: number | null;
 }
 
+/** これより長く取得していなければ、開いたときに取得する [ms] */
+const STALE_MS = 30 * 60_000;
+/** 更新ボタンを続けて押せない時間 [ms] */
+const REFRESH_COOLDOWN = 15_000;
+
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
 const resultText = (o: RankedOutcome) =>
@@ -48,21 +53,20 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
   const [me, setMe] = useState<string | null>(null);
   const [myName, setMyName] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState('');
-  const [versions, setVersions] = useState<EntryVersion[]>([]);
-  const [players, setPlayers] = useState<Map<string, string>>(new Map());
-  const [matches, setMatches] = useState<api.RandomMatch[]>([]);
-  const [results, setResults] = useState<api.RandomResult[]>([]);
+  // ブラウザに保存している情報(取得するのは、しばらく取得していないときに開いたとき・試合のあと・更新ボタンのときだけ)
+  const [snap, setSnap] = useState<api.RankedSnapshot>({ versions: [], players: new Map(), results: [], randomMatches: [], randomResults: [], syncedAt: 0 });
+  const { versions, players, randomMatches: matches, randomResults: results } = snap;
+  /** 更新ボタンを押したばかり(しばらく押せない) */
+  const [cooling, setCooling] = useState(false);
   const [current, setCurrent] = useState<Current | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
 
+  /** サーバーから新しい分だけを取得する */
   const refresh = async () => {
-    const [v, p, m, r] = await Promise.all([api.listEntryVersions(), api.listPlayers(), api.listRandomMatches(), api.fetchRandomResults()]);
-    setVersions(v);
-    setPlayers(new Map(p.map((x) => [x.id, x.name])));
-    setMatches(m);
-    setResults(r);
-    return { v, p, m, r };
+    setCooling(true);
+    setTimeout(() => setCooling(false), REFRESH_COOLDOWN);
+    return api.syncRanked();
   };
 
   const run = async (f: () => Promise<void>) => {
@@ -78,13 +82,18 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
 
   useEffect(() => {
     if (!api.onlineConfigured) return;
+    const unsubscribe = api.subscribeRanked(setSnap);
     void run(async () => {
+      const cached = await api.rankedSnapshot();
+      setSnap(cached);
       const { id, player } = await api.myPlayer();
       setMe(id);
       setMyName(player?.name ?? null);
       setNameInput(player?.name ?? '');
-      await refresh();
+      // 30分以上取得していなければ取得する(それ以外は更新ボタンで)
+      if (Date.now() - cached.syncedAt > STALE_MS) await refresh();
     });
+    return unsubscribe;
   }, []);
 
   if (!api.onlineConfigured) {
@@ -125,14 +134,15 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
       // 先に計算して報告する(再生の途中で画面を閉じても、結果は残る)
       const outcome = await api.computeMatch(fa, fb, randomMatchSeed(match.id));
       await api.reportRandomResult(match.id, outcome);
-      const { v: vs, p, m, r } = await refresh();
+      // 自分の版・相手・結果を取得する(新しい分だけ)
+      const fresh = await refresh();
       // いまのキャラの版が登録されたので、まとめ直してからレートを見る
-      const g = monsterGroups(vs);
+      const g = monsterGroups(fresh.versions);
       const key = g.find(me!, charId, character.name);
-      const after = key ? rating(api.randomStats(m, r, g).get(key)) : before;
+      const after = key ? rating(api.randomStats(fresh.randomMatches, fresh.randomResults, g).get(key)) : before;
       // 計算したのと同じ試合を画面で再生する
-      const oe = vs.find((x) => x.id === match.b);
-      const opponent = oe ? `${oe.name}(${p.find((x) => x.id === oe.owner)?.name ?? '名無し'})` : '相手';
+      const oe = fresh.versions.find((x) => x.id === match.b);
+      const opponent = oe ? `${oe.name}(${fresh.players.get(oe.owner) ?? '名無し'})` : '相手';
       setCurrent({ opponent, outcome, shown: false, before, after });
       // マイキャラのリプレイに保存する
       const record: BattleRecord = { seed: randomMatchSeed(match.id), names: [character.name, opponent], fighters: [fa, fb] };
@@ -207,6 +217,19 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
         </div>
       )}
       {message && <p className={message.error ? 'message error' : 'message'}>{message.text}</p>}
+      <div className="refresh-row">
+        <span className="muted small">
+          {snap.syncedAt ? `最終更新 ${new Date(snap.syncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'まだ取得していません'}
+        </span>
+        <button
+          className="small-button"
+          disabled={busy || cooling}
+          onClick={() => run(async () => void (await refresh()))}
+          title="新しい登録・プレイヤー名・試合の結果を取得します"
+        >
+          更新
+        </button>
+      </div>
       {myMatches.length > 0 && (
         <>
           <h3>このキャラの対戦</h3>

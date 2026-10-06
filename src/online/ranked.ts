@@ -1,12 +1,20 @@
 // ランクマッチのサーバー(Supabase)とのやりとりと、計算用Workerの窓口。
 // サーバーに置くのは、プレイヤー名・登録モンスター(版ごと)・試合の結果の報告だけ。
 // 試合そのものは各ブラウザで計算する(決定論的なので、誰が計算しても同じ結果になる)。
+//
+// 通信を減らすしくみ(docs/DATA.md)
+//   ・取得した一覧はブラウザ(IndexedDB)に保存し、次からは「前回より新しい分」だけを取得する
+//     (登録の版とランダムマッチの試合は追記のみなので、id が前回より大きい行だけを取ればよい)
+//   ・登録の版のデータ(脳つきのキャラ、最大32KB)は書き換えられないので、一度取得したらブラウザに保存して二度と取得しない
+//   ・取得は自動では行わない。画面を開いたとき・トーナメントが始まったとき(出場者を決めるため)・更新ボタンを押したときだけ
+//   ・結果の報告はまとめて1回で送り、一度報告した試合はブラウザに記録して送り直さない
 import type { Character } from '../core/character';
 import { characterToJson, parseCharacter } from '../core/codec';
 import type { RaceRecord } from '../core/ranked/run';
 import {
   computeRatings,
   randomMatchSeed,
+  tournamentAt,
   type EntryVersion,
   type MonsterGroups,
   type PlayerStats,
@@ -36,9 +44,199 @@ function check<T>(res: { data: T | null; error: { code?: string; message: string
   return res.data as T;
 }
 
+/** Supabase は1回に最大1000行しか返さないので、ページに分けて取得する */
+const PAGE = 1000;
+async function pages<T>(
+  query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { code?: string; message: string } | null }>,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const rows = check(await query(from, from + PAGE - 1));
+    all.push(...rows);
+    if (rows.length < PAGE) return all;
+  }
+}
+
+/** ブラウザに保存するときのキー(Supabase のプロジェクトごとに分ける) */
+const scope = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '';
+const CACHE_KEY = `ranked-cache:${scope}`;
+const REPORTED_KEY = `ranked-reported:${scope}`;
+const entryDataKey = (id: number) => `ranked-entry-data:${scope}:${id}`;
+/** 結果を取り直すトーナメントの範囲(これより古いトーナメントの結果は確定しているとみなす) */
+const RESULT_WINDOW = 6;
+
 export interface Player {
   id: string;
   name: string;
+}
+
+export interface RandomMatch {
+  id: number;
+  /** 挑戦した側(a)と相手(b)の登録の版 */
+  a: number;
+  b: number;
+  aMonster: string;
+  bMonster: string;
+  createdAt: number;
+}
+
+export interface RandomResult {
+  matchId: number;
+  winner: 0 | 1 | null;
+  cause: string | null;
+  /** その結果を報告した人数 */
+  reports: number;
+}
+
+/** ブラウザに保存しているランクマッチの情報 */
+export interface RankedSnapshot {
+  versions: EntryVersion[];
+  players: Map<string, string>;
+  results: RankedResultRow[];
+  randomMatches: RandomMatch[];
+  randomResults: RandomResult[];
+  /** 最後にサーバーから取得した時刻 [ms](一度も取得していなければ 0) */
+  syncedAt: number;
+}
+
+interface Cache {
+  version: 1;
+  versions: EntryVersion[];
+  players: [string, string][];
+  /** 取得済みのプレイヤーの更新時刻のうち、いちばん新しいもの */
+  playersAt: string;
+  results: RankedResultRow[];
+  randomMatches: RandomMatch[];
+  randomResults: RandomResult[];
+  syncedAt: number;
+}
+
+const emptyCache = (): Cache => ({ version: 1, versions: [], players: [], playersAt: '', results: [], randomMatches: [], randomResults: [], syncedAt: 0 });
+
+let cache: Cache | null = null;
+let loading: Promise<Cache> | null = null;
+
+async function loadCache(): Promise<Cache> {
+  if (cache) return cache;
+  loading ??= getSetting<Cache>(CACHE_KEY).then((c) => {
+    cache = c && c.version === 1 ? c : emptyCache();
+    return cache;
+  });
+  return loading;
+}
+
+const toSnapshot = (c: Cache): RankedSnapshot => ({
+  versions: c.versions,
+  players: new Map(c.players),
+  results: c.results,
+  randomMatches: c.randomMatches,
+  randomResults: c.randomResults,
+  syncedAt: c.syncedAt,
+});
+
+const listeners = new Set<(s: RankedSnapshot) => void>();
+
+/** 保存している情報が変わったら呼ばれる。戻り値は登録の解除 */
+export function subscribeRanked(f: (s: RankedSnapshot) => void): () => void {
+  listeners.add(f);
+  return () => listeners.delete(f);
+}
+
+async function commit(c: Cache): Promise<RankedSnapshot> {
+  await setSetting(CACHE_KEY, c);
+  const s = toSnapshot(c);
+  for (const f of listeners) f(s);
+  return s;
+}
+
+/** ブラウザに保存している情報(通信しない) */
+export async function rankedSnapshot(): Promise<RankedSnapshot> {
+  return toSnapshot(await loadCache());
+}
+
+let syncing: Promise<RankedSnapshot> | null = null;
+
+/** サーバーから、前回より新しい分だけを取得する(同時に呼ばれたら1回にまとめる) */
+export function syncRanked(): Promise<RankedSnapshot> {
+  syncing ??= doSync().finally(() => {
+    syncing = null;
+  });
+  return syncing;
+}
+
+async function doSync(): Promise<RankedSnapshot> {
+  await ensureSession();
+  const c = await loadCache();
+  const sb = supabaseClient();
+
+  // 登録の版(追記のみ):前回より新しい id だけ
+  const maxEntry = c.versions.length ? c.versions[c.versions.length - 1].id : 0;
+  const entries = await pages<{ id: number; owner: string; name: string; monster: string; tournament: boolean; created_at: string }>((from, to) =>
+    sb.from('ranked_entries').select('id, owner, name, monster, tournament, created_at').gt('id', maxEntry).order('id').range(from, to),
+  );
+  const versions = [
+    ...c.versions,
+    ...entries.map((r) => ({
+      id: Number(r.id),
+      owner: r.owner,
+      name: r.name,
+      monster: r.monster ?? '',
+      tournament: r.tournament ?? true,
+      createdAt: Date.parse(r.created_at),
+    })),
+  ];
+
+  // プレイヤー:前回より後に名前を登録・変更した人だけ
+  const players = await pages<{ id: string; name: string; updated_at: string }>((from, to) => {
+    const q = sb.from('players').select('id, name, updated_at');
+    return (c.playersAt ? q.gt('updated_at', c.playersAt) : q).order('updated_at').range(from, to);
+  });
+  const playerMap = new Map(c.players);
+  let playersAt = c.playersAt;
+  for (const p of players) {
+    playerMap.set(p.id, p.name);
+    if (p.updated_at > playersAt) playersAt = p.updated_at;
+  }
+
+  // トーナメントの結果:最近のトーナメントだけ取り直す(古いものは確定済み)
+  const since = c.results.length ? tournamentAt(Date.now()) - RESULT_WINDOW : 0;
+  const results = await pages<RankedResultRow>((from, to) =>
+    sb
+      .from('ranked_results')
+      .select('tournament, match, a, b, winner, cause, reports')
+      .gte('tournament', since)
+      .order('tournament')
+      .order('match')
+      .range(from, to),
+  );
+  const mergedResults = [
+    ...c.results.filter((r) => r.tournament < since),
+    ...results.map((r) => ({ ...r, tournament: Number(r.tournament), a: Number(r.a), b: Number(r.b), reports: Number(r.reports ?? 1) })),
+  ];
+
+  // ランダムマッチの試合(追記のみ):前回より新しい id だけ
+  const maxMatch = c.randomMatches.length ? c.randomMatches[c.randomMatches.length - 1].id : 0;
+  const matches = await pages<RandomMatchRow>((from, to) =>
+    sb.from('random_matches').select('id, a, b, a_monster, b_monster, created_at').gt('id', maxMatch).order('id').range(from, to),
+  );
+  const randomMatches = [...c.randomMatches, ...matches.map(toMatch)];
+
+  // ランダムマッチの結果:まだ結果を持っていない試合のうち、いちばん古いものから後だけ
+  const known = new Set(c.randomResults.map((r) => r.matchId));
+  const pendingIds = randomMatches.filter((m) => !known.has(m.id)).map((m) => m.id);
+  let randomResults = c.randomResults;
+  if (pendingIds.length > 0) {
+    const fromId = Math.min(...pendingIds);
+    const rows = await pages<{ match_id: number; winner: 0 | 1 | null; cause: string | null; reports: number }>((from, to) =>
+      sb.from('random_results').select('match_id, winner, cause, reports').gte('match_id', fromId).order('match_id').range(from, to),
+    );
+    const byId = new Map(randomResults.map((r) => [r.matchId, r]));
+    for (const r of rows) byId.set(Number(r.match_id), { matchId: Number(r.match_id), winner: r.winner, cause: r.cause, reports: Number(r.reports ?? 1) });
+    randomResults = [...byId.values()].sort((x, y) => x.matchId - y.matchId);
+  }
+
+  cache = { version: 1, versions, players: [...playerMap], playersAt, results: mergedResults, randomMatches, randomResults, syncedAt: Date.now() };
+  return commit(cache);
 }
 
 export async function myPlayer(): Promise<{
@@ -46,6 +244,9 @@ export async function myPlayer(): Promise<{
   player: Player | null;
 }> {
   const id = await ensureSession();
+  const c = await loadCache();
+  const known = c.players.find(([pid]) => pid === id);
+  if (known) return { id, player: { id, name: known[1] } };
   const rows = check(await supabaseClient().from('players').select('id, name').eq('id', id));
   return { id, player: (rows as Player[])[0] ?? null };
 }
@@ -57,10 +258,10 @@ export async function savePlayerName(name: string): Promise<void> {
   const res = await supabaseClient().from('players').upsert({ id, name: trimmed });
   if (res.error?.code === '23505') throw new Error('その名前はほかのプレイヤーが使っています');
   check(res);
-}
-
-export async function listPlayers(): Promise<Player[]> {
-  return check(await supabaseClient().from('players').select('id, name').limit(5000)) as Player[];
+  // 自分の名前はすぐ反映する(ほかの人の変更は次の取得で)
+  const c = await loadCache();
+  c.players = [...c.players.filter(([pid]) => pid !== id), [id, trimmed]];
+  await commit(c);
 }
 
 /** 登録の版を作る。同じモンスターで中身が変わっていなければ、前の版を使い回す(ランダムマッチ用の控え) */
@@ -76,7 +277,9 @@ async function insertEntry(c: Character, monster: string, tournament: boolean): 
   }
   const row = check(await supabaseClient().from('ranked_entries').insert({ name: c.name, monster, tournament, data }).select('id').single()) as { id: number };
   await setSetting(key, { id: row.id, json });
-  return row.id;
+  // 自分で登録したデータは取得し直さなくてよいように保存しておく
+  await setSetting(entryDataKey(Number(row.id)), data);
+  return Number(row.id);
 }
 
 /**
@@ -85,38 +288,10 @@ async function insertEntry(c: Character, monster: string, tournament: boolean): 
  */
 export async function registerRankedEntry(c: Character, monster: string): Promise<void> {
   await insertEntry(c, monster, true);
-}
-
-export async function listEntryVersions(): Promise<EntryVersion[]> {
-  const rows = check(await supabaseClient().from('ranked_entries').select('id, owner, name, monster, tournament, created_at').order('id').limit(10000)) as {
-    id: number;
-    owner: string;
-    name: string;
-    monster: string;
-    tournament: boolean;
-    created_at: string;
-  }[];
-  return rows.map((r) => ({
-    id: r.id,
-    owner: r.owner,
-    name: r.name,
-    monster: r.monster ?? '',
-    tournament: r.tournament ?? true,
-    createdAt: Date.parse(r.created_at),
-  }));
+  await syncRanked();
 }
 
 // ---- ランダムマッチ ----
-
-export interface RandomMatch {
-  id: number;
-  /** 挑戦した側(a)と相手(b)の登録の版 */
-  a: number;
-  b: number;
-  aMonster: string;
-  bMonster: string;
-  createdAt: number;
-}
 
 interface RandomMatchRow {
   id: number;
@@ -141,28 +316,6 @@ export async function startRandomMatch(c: Character, monster: string): Promise<R
   const entry = await insertEntry(c, monster, false);
   const rows = check(await supabaseClient().rpc('start_random_match', { entry })) as RandomMatchRow[];
   return rows.length ? toMatch(rows[0]) : null;
-}
-
-export async function listRandomMatches(): Promise<RandomMatch[]> {
-  const rows = check(
-    await supabaseClient().from('random_matches').select('id, a, b, a_monster, b_monster, created_at').order('id').limit(20000),
-  ) as RandomMatchRow[];
-  return rows.map(toMatch);
-}
-
-export interface RandomResult {
-  matchId: number;
-  winner: 0 | 1 | null;
-  cause: string | null;
-}
-
-export async function fetchRandomResults(): Promise<RandomResult[]> {
-  const rows = check(await supabaseClient().from('random_results').select('match_id, winner, cause').limit(20000)) as {
-    match_id: number;
-    winner: 0 | 1 | null;
-    cause: string | null;
-  }[];
-  return rows.map((r) => ({ matchId: Number(r.match_id), winner: r.winner, cause: r.cause }));
 }
 
 export async function reportRandomResult(matchId: number, o: RankedOutcome): Promise<void> {
@@ -218,45 +371,66 @@ export async function settlePendingRandomMatches(matches: readonly RandomMatch[]
 
 const dataCache = new Map<number, FighterData | null>();
 
-/** 登録の版のデータ(脳つきのキャラ)。検証に通らないデータは null */
+function toFighter(data: unknown): FighterData | null {
+  try {
+    const c = parseCharacter(data);
+    return c.motor && c.decision ? { blueprint: c.blueprint, motor: c.motor, decision: c.decision, controller: 'brain' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 登録の版のデータ(脳つきのキャラ)。検証に通らないデータは null。
+ * 登録の版は書き換えられないので、一度取得したらブラウザに保存し、二度と取得しない
+ */
 export async function entryFighters(ids: number[]): Promise<Map<number, FighterData | null>> {
-  const missing = [...new Set(ids)].filter((id) => !dataCache.has(id));
+  const unique = [...new Set(ids)].filter((id) => !dataCache.has(id));
+  const missing: number[] = [];
+  for (const id of unique) {
+    const saved = await getSetting<unknown>(entryDataKey(id));
+    if (saved !== undefined) dataCache.set(id, toFighter(saved));
+    else missing.push(id);
+  }
   if (missing.length > 0) {
     const rows = check(await supabaseClient().from('ranked_entries').select('id, data').in('id', missing)) as { id: number; data: unknown }[];
     for (const r of rows) {
-      try {
-        const c = parseCharacter(r.data);
-        dataCache.set(
-          r.id,
-          c.motor && c.decision
-            ? {
-                blueprint: c.blueprint,
-                motor: c.motor,
-                decision: c.decision,
-                controller: 'brain',
-              }
-            : null,
-        );
-      } catch {
-        dataCache.set(r.id, null);
-      }
+      dataCache.set(Number(r.id), toFighter(r.data));
+      await setSetting(entryDataKey(Number(r.id)), r.data);
     }
   }
   return new Map(ids.map((id) => [id, dataCache.get(id) ?? null]));
 }
 
-/** 計算した試合の結果を報告する(同じ試合を2回報告しても1回分) */
-export async function reportResult(tournament: number, match: number, a: number, b: number, o: RankedOutcome): Promise<void> {
+export interface PendingReport {
+  tournament: number;
+  match: number;
+  a: number;
+  b: number;
+  outcome: RankedOutcome;
+}
+
+let reportedKeys: Set<string> | null = null;
+
+/**
+ * 計算した試合の結果をまとめて報告する。一度報告した試合と、すでに十分な人数(3人以上)が同じ結果を報告した試合は送らない
+ */
+export async function reportResults(list: readonly PendingReport[]): Promise<void> {
+  reportedKeys ??= new Set(((await getSetting<string[]>(REPORTED_KEY)) ?? []).slice(-1000));
+  const c = await loadCache();
+  const settledKeys = new Set(c.results.filter((r) => (r.reports ?? 1) >= 3).map((r) => `${r.tournament}:${r.match}`));
+  const rows = list.filter((r) => !reportedKeys!.has(`${r.tournament}:${r.match}`) && !settledKeys.has(`${r.tournament}:${r.match}`));
+  if (rows.length === 0) return;
   await ensureSession();
   const res = await supabaseClient()
     .from('ranked_reports')
-    .upsert({ tournament, match, a, b, winner: o.winner, cause: o.cause }, { onConflict: 'tournament,match,reporter', ignoreDuplicates: true });
+    .upsert(
+      rows.map((r) => ({ tournament: r.tournament, match: r.match, a: r.a, b: r.b, winner: r.outcome.winner, cause: r.outcome.cause })),
+      { onConflict: 'tournament,match,reporter', ignoreDuplicates: true },
+    );
   check(res);
-}
-
-export async function fetchResults(): Promise<RankedResultRow[]> {
-  const rows = check(await supabaseClient().from('ranked_results').select('tournament, match, a, b, winner, cause').limit(20000)) as RankedResultRow[];
-  return rows.map((r) => ({ ...r, tournament: Number(r.tournament) }));
+  for (const r of rows) reportedKeys.add(`${r.tournament}:${r.match}`);
+  await setSetting(REPORTED_KEY, [...reportedKeys].slice(-1000));
 }
 
 // ---- 計算用Worker ----

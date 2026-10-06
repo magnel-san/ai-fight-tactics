@@ -70,11 +70,18 @@ export async function registerCharacter(c: Character, onlineId?: string): Promis
   return (data as { id: string }).id;
 }
 
-export async function myCharacters(): Promise<OnlineCharacter[]> {
+/** 自分が登録したキャラの一覧(名前と更新日時だけ。キャラのデータ本体は取得しない) */
+export interface MyOnlineCharacter {
+  id: string;
+  name: string;
+  updatedAt: string;
+}
+
+export async function myCharacters(): Promise<MyOnlineCharacter[]> {
   const me = await ensureSession();
-  const { data, error } = await supabaseClient().from('characters').select('id, owner, name, data, updated_at').eq('owner', me).order('updated_at', { ascending: false });
+  const { data, error } = await supabaseClient().from('characters').select('id, name, updated_at').eq('owner', me).order('updated_at', { ascending: false });
   if (error) throw new Error(error.message);
-  return (data as Row[]).map((r) => toOnline(r, me)).filter((x): x is OnlineCharacter => x !== null);
+  return (data as { id: string; name: string; updated_at: string }[]).map((r) => ({ id: r.id, name: r.name, updatedAt: r.updated_at }));
 }
 
 /** ランダムな対戦相手(自分以外のキャラ) */
