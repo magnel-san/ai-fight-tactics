@@ -10,6 +10,7 @@ export const MILESTONE_LABELS: Record<keyof EpisodeFlags, string> = {
   crossed: '初めて穴をまたいだ',
   survived60: '60秒生き残った',
   won: '初勝利',
+  jumped: '初めてジャンプした',
 };
 
 export interface Toast {

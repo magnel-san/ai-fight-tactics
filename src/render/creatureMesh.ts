@@ -13,6 +13,7 @@ export const BLOCK_COLORS: Record<BlockType, number> = {
   bouncy: 0xeb5757,
   grip: 0x6fcf97,
   piston: 0xc58b4a,
+  sensor: 0xbb6bd9,
 };
 
 export interface CreatureMesh {

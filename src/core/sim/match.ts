@@ -3,7 +3,7 @@
 // 報酬はトレーニング用で、0番のキャラ(鍛えている側)から見た値。
 import { DecisionBrain, footing, rushCommand } from '../brain/decision';
 import type { MotorCommand } from '../brain/motor';
-import { BATTLE, PHYSICS, PUSH_TASK, STAGE, SURVIVE_TASK } from '../config';
+import { AVOID_TASK, BATTLE, PHYSICS, PUSH_TASK, STAGE, SURVIVE_TASK } from '../config';
 import { atan2 } from '../math/fmath';
 import { Rng } from '../math/rng';
 import type { Rapier } from '../physics/rapier';
@@ -14,7 +14,8 @@ import { spawnHeight } from '../training/move';
 import type { FighterData } from '../training/tasks';
 import { Fighter } from './fighter';
 
-export type MatchMode = 'battle' | 'survive' | 'push';
+/** avoid:崩れないステージで危険なタイルを避ける練習(崩れたタイルは踏んではいけない床として残る) */
+export type MatchMode = 'battle' | 'survive' | 'push' | 'avoid';
 
 export interface MatchOptions {
   mode: MatchMode;
@@ -53,15 +54,23 @@ export class MatchEpisode extends EpisodeBase {
   private lastContact = -Infinity;
   private prevPush = 0;
   private prevOpponentDist: number | null = null;
+  /** 踏んではいけないタイル(崩れたはずのタイル)に触れていた時間 [s](avoid のみ) */
+  private forbiddenTime = 0;
   /** 外から指令を与える(手書きのルールのBOTや検証用)。null を返したキャラは通常どおり判断する */
   externalCommand: ((i: number, f: Fighter) => MotorCommand | null) | null = null;
 
   constructor(R: Rapier, opts: MatchOptions) {
     super(R);
     this.options = opts;
-    this.timeLimit = opts.timeLimit ?? (opts.mode === 'battle' ? BATTLE.timeLimit : opts.mode === 'push' ? PUSH_TASK.timeLimit : SURVIVE_TASK.timeLimit);
+    this.timeLimit =
+      opts.timeLimit ??
+      (opts.mode === 'battle' ? BATTLE.timeLimit : opts.mode === 'push' ? PUSH_TASK.timeLimit : opts.mode === 'avoid' ? AVOID_TASK.timeLimit : SURVIVE_TASK.timeLimit);
     const rng = new Rng(opts.seed);
-    this.stage = new Stage(R, this.world, rng.nextU32(), { rules: true, pace: opts.pace ?? 1 });
+    this.stage = new Stage(R, this.world, rng.nextU32(), {
+      rules: true,
+      pace: opts.mode === 'avoid' ? AVOID_TASK.pace : (opts.pace ?? 1),
+      solid: opts.mode === 'avoid',
+    });
 
     // スポーン:中心を挟んで反対側、中心を向いて、タイル上面から一定の高さに置く。並びの向きはシードで決める
     const rot = rng.int(6);
@@ -124,6 +133,8 @@ export class MatchEpisode extends EpisodeBase {
     const me = this.fighters[0];
     if (this.options.mode === 'survive') {
       if (me.out) this.reward -= SURVIVE_TASK.fallPenalty;
+    } else if (this.options.mode === 'avoid') {
+      if (me.out) this.reward -= AVOID_TASK.fallPenalty;
     } else if (this.options.mode === 'push') {
       // 押し出して勝つと大きく、相手の自滅で勝つと小さく加点。押し出されて負けると大きく減点
       if (winner === 0) this.reward += this.causes[1] === 'pushed' ? PUSH_TASK.winPushBonus : PUSH_TASK.winFallBonus;
@@ -132,6 +143,9 @@ export class MatchEpisode extends EpisodeBase {
     if (this.options.mode === 'battle' || this.options.mode === 'push') {
       this.success = winner === 0;
       this.flags.won = winner === 0;
+    } else if (this.options.mode === 'avoid') {
+      this.metric = this.forbiddenTime;
+      this.success = !me.out && this.forbiddenTime < AVOID_TASK.passForbiddenTime;
     } else {
       this.success = !me.out;
     }
@@ -174,10 +188,8 @@ export class MatchEpisode extends EpisodeBase {
     const t = this.time;
 
     // ステージを進める(脱落していないキャラの、地面に触れているすべてのブロックの位置で滞在タイマーを溜める)
-    stage.update(
-      BRAIN_DT,
-      this.fighters.filter((f) => !f.out).flatMap((f) => f.groundContacts()),
-    );
+    const contacts = this.fighters.map((f) => (f.out ? [] : f.groundContacts()));
+    stage.update(BRAIN_DT, contacts.flat());
 
     // 接触の記録(2体のブロック同士が実際に触れているか)
     const touchingNow = this.fighters.length === 2 && !this.fighters[0].out && !this.fighters[1].out && this.touching();
@@ -188,7 +200,20 @@ export class MatchEpisode extends EpisodeBase {
     if (!me.out && this.options.mode !== 'battle') {
       const p = me.position();
       const d = stage.dangerAt(p.x, p.z);
-      if (this.options.mode === 'survive') {
+      if (this.options.mode === 'avoid') {
+        // 触れているブロックの下のタイルのうち、いちばん悪い状態で加点・減点する
+        let worst = 0;
+        for (const c of contacts[0]) {
+          const tile = stage.tileAt(c.x, c.z);
+          if (!tile) continue;
+          worst = Math.max(worst, tile.state === 'collapsed' ? 2 : tile.state === 'warning' ? 1 : 0);
+        }
+        if (worst === 2) {
+          this.forbiddenTime += BRAIN_DT;
+          this.reward -= AVOID_TASK.forbiddenPenalty * BRAIN_DT;
+        } else if (worst === 1) this.reward -= AVOID_TASK.warningPenalty * BRAIN_DT;
+        else this.reward += AVOID_TASK.safeBonus * BRAIN_DT;
+      } else if (this.options.mode === 'survive') {
         this.reward += SURVIVE_TASK.aliveBonus * BRAIN_DT;
         if (d === 0) this.reward += SURVIVE_TASK.safeBonus * BRAIN_DT;
         else this.reward -= SURVIVE_TASK.dangerPenalty * BRAIN_DT;

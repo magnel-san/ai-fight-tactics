@@ -54,6 +54,19 @@ export class Fighter {
     return out;
   }
 
+  /** センサーブロックが地面に触れているか(トレーニングの減点に使う) */
+  sensorTouching(): boolean {
+    const c = this.creature;
+    return c.blueprint.blocks.some((b, i) => {
+      if (b.type !== 'sensor') return false;
+      const body = c.bodies[c.segmentOf[i]];
+      const o = c.localOffsets[i];
+      const [, dy] = rotate(body.rotation(), o[0], o[1], o[2]);
+      const y = body.translation().y + dy;
+      return y <= STAGE.stayContactHeight && y > -STAGE.tileHeight;
+    });
+  }
+
   position(): { x: number; y: number; z: number } {
     return this.core.translation();
   }

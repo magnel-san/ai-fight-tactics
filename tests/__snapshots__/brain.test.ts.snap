@@ -5,6 +5,7 @@ exports[`トレーニング「目標地点への移動」 > 同じ遺伝子・�
   "episodeFlags": [
     {
       "crossed": false,
+      "jumped": false,
       "reached": false,
       "stood": true,
       "survived60": false,
@@ -12,6 +13,7 @@ exports[`トレーニング「目標地点への移動」 > 同じ遺伝子・�
     },
     {
       "crossed": false,
+      "jumped": false,
       "reached": false,
       "stood": true,
       "survived60": false,
@@ -19,6 +21,7 @@ exports[`トレーニング「目標地点への移動」 > 同じ遺伝子・�
     },
     {
       "crossed": false,
+      "jumped": false,
       "reached": false,
       "stood": true,
       "survived60": false,
@@ -28,6 +31,7 @@ exports[`トレーニング「目標地点への移動」 > 同じ遺伝子・�
   "fitness": -2.929941186204395,
   "flags": {
     "crossed": false,
+    "jumped": false,
     "reached": false,
     "stood": true,
     "survived60": false,

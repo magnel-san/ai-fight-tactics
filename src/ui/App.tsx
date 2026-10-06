@@ -77,8 +77,8 @@ export function App() {
     return list;
   }, [store.library, store.activeId, preferredOpponent]);
 
-  // 押し合いトレーニングの相手:突進BOT → 標準BOT(合格の目標)→ 対戦相手プール
-  const trainingOpponents = useMemo<Opponent[]>(() => {
+  // ライバル練習試合の相手:対戦相手プール(受け取ったキャラ・過去の自分など)
+  const rivalOpponents = useMemo<Opponent[]>(() => {
     const pool: Opponent[] = [];
     for (const p of store.pool) {
       try {
@@ -88,7 +88,7 @@ export function App() {
         // 読めないデータは使わない
       }
     }
-    return [...BOTS, ...pool];
+    return pool;
   }, [store.pool]);
 
   const onBattleFinished = useCallback((rec: BattleRecord) => {
@@ -159,7 +159,8 @@ export function App() {
                 charId={store.activeId}
                 character={character}
                 onChange={setCharacter}
-                opponents={trainingOpponents}
+                opponents={BOTS}
+                rivals={rivalOpponents}
                 active={tab === 'train'}
                 replayRequest={trainReplay}
               />

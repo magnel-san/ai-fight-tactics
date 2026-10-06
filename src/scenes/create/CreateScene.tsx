@@ -25,6 +25,7 @@ const PALETTE: { type: Exclude<BlockType, 'core'>; label: string; note: string }
   { type: 'bouncy', label: '弾力', note: '当たった相手を弾き飛ばす' },
   { type: 'grip', label: 'グリップ', note: '摩擦が大きく踏ん張れる' },
   { type: 'piston', label: 'ピストン', note: '付けた面の向きに1マス伸び縮みする(ジャンプや押し出しに)' },
+  { type: 'sensor', label: 'センサー', note: 'トレーニング中に地面に触れると減点(倒れにくい動きを学ばせる。バトルでは普通のブロック)' },
 ];
 
 const AXES: { axis: Axis; label: string }[] = [
@@ -157,7 +158,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
       } else if (key === 'r' && h !== null && bp.blocks[h]?.type === 'joint') {
         const next = NEXT_AXIS[bp.blocks[h].axis!];
         commit(sym ? setJointAxisSymmetric(bp, h, next) : setJointAxis(bp, h, next));
-      } else if (['1', '2', '3', '4', '5'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+      } else if (['1', '2', '3', '4', '5', '6'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
         setType(PALETTE[Number(e.key) - 1].type);
       }
     };
@@ -295,7 +296,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           <li>Delete:選択中のブロックとその先を削除(選択がなければマウスの下のブロック)</li>
           <li>R:選択中(またはマウスの下)の関節の軸を切り替え</li>
           <li>Ctrl+Z / Ctrl+Y:取り消し / やり直し</li>
-          <li>1〜5:ブロックの種類を選ぶ</li>
+          <li>1〜6:ブロックの種類を選ぶ</li>
         </ul>
       </aside>
 

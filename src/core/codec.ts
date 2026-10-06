@@ -159,7 +159,7 @@ function migrate1to2(json: CharacterJson): CharacterJson {
   return { ...json, version: 2, brains: { ...json.brains, decision } };
 }
 
-const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'grip', 'piston']);
+const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'grip', 'piston', 'sensor']);
 const FACES = new Set(['+x', '-x', '+y', '-y', '+z', '-z']);
 const AXES = new Set(['x', 'y', 'z']);
 

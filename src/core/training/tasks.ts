@@ -1,15 +1,16 @@
 // トレーニングメニューの一覧と評価(仕様書セクション9)。
 // 各メニューは、どちらの脳を鍛えるか・エピソードの作り方・合格判定を持つ。
 import type { Blueprint } from '../creature/blueprint';
-import { CHASE_TASK, HOLES_TASK, MOVE_TASK, PUSH_TASK, SURVIVE_TASK } from '../config';
+import { AVOID_TASK, CHASE_TASK, HOLES_TASK, JUMP_TASK, MOVE_TASK, PUSH_TASK, SURVIVE_TASK } from '../config';
 import type { Rapier } from '../physics/rapier';
 import { MatchEpisode } from '../sim/match';
 import { ChaseEpisode } from './chase';
 import type { Episode, EpisodeFlags, EpisodeOutcome } from './episode';
 import { HolesEpisode } from './holes';
+import { JumpEpisode } from './jump';
 import { MoveEpisode, type Sector } from './move';
 
-export type TaskName = 'move' | 'chase' | 'holes' | 'survive' | 'push';
+export type TaskName = 'move' | 'chase' | 'jump' | 'holes' | 'avoid' | 'survive' | 'push' | 'rival';
 export type BrainKind = 'motor' | 'decision';
 
 /** 試合・課題に出るキャラ1体分のデータ */
@@ -94,6 +95,33 @@ export const TASKS: Record<TaskName, TaskDef> = {
     passed: (o) => successCount(o) >= 6,
     describe: (o) => `${successCount(o)} / ${o.length} 回、${HOLES_TASK.passRows}列以上を越えた(6回で合格)`,
   },
+  jump: {
+    name: 'jump',
+    label: 'ジャンプ',
+    brain: 'motor',
+    note: '運動脳を鍛える(任意)。ジャンプ指令が出たら跳ぶ。関節だけでもピストンでも跳べる',
+    passCondition: `コアの上がる高さの平均 ${JUMP_TASK.passHeight}m 以上`,
+    createEpisode: (R, setup, genome, seed) => new JumpEpisode(R, setup.blueprint, genome, seed),
+    confirmEpisodes: 9,
+    passed: (o) => metricMean(o) >= JUMP_TASK.passHeight,
+    describe: (o) => `平均 ${metricMean(o).toFixed(2)}m(${JUMP_TASK.passHeight}m で合格)`,
+  },
+  avoid: {
+    name: 'avoid',
+    label: '危険なタイルを避ける',
+    brain: 'decision',
+    note: '判断脳を鍛える。床は崩れないが、赤いタイル(崩れる予定・崩れたはずのタイル)を踏むと減点',
+    passCondition: `${AVOID_TASK.timeLimit}秒のあいだ、崩れたはずのタイルに触れた時間 ${AVOID_TASK.passForbiddenTime}秒未満`,
+    createEpisode: (R, setup, genome, seed) =>
+      new MatchEpisode(R, {
+        mode: 'avoid',
+        seed,
+        fighters: [{ blueprint: setup.blueprint, motor: needMotor(setup), decision: genome, controller: 'brain' }],
+      }),
+    confirmEpisodes: 9,
+    passed: (o) => successCount(o) >= 6,
+    describe: (o) => `${successCount(o)} / ${o.length} 回、ほぼ踏まずに${AVOID_TASK.timeLimit}秒(6回で合格)`,
+  },
   survive: {
     name: 'survive',
     label: '崩落ステージを生き残る',
@@ -115,7 +143,7 @@ export const TASKS: Record<TaskName, TaskDef> = {
     name: 'push',
     label: 'BOTとの押し合い',
     brain: 'decision',
-    note: '判断脳を鍛える。BOTと対戦する。相手は段階的に強くなる',
+    note: '判断脳を鍛える。BOTと対戦する(突進BOT → 標準BOT)。押し出して勝つと高い得点',
     passCondition: `標準BOTに勝率${(PUSH_TASK.confirmWins / PUSH_TASK.confirmMatches) * 100}%以上`,
     createEpisode: (R, setup, genome, seed, sector, mode) => {
       const self: FighterData = { blueprint: setup.blueprint, motor: needMotor(setup), decision: genome, controller: 'brain' };
@@ -128,6 +156,23 @@ export const TASKS: Record<TaskName, TaskDef> = {
     confirmEpisodes: PUSH_TASK.confirmMatches,
     passed: (o) => successCount(o) >= PUSH_TASK.confirmWins,
     describe: (o) => `${o.length}戦${successCount(o)}勝(${PUSH_TASK.confirmWins}勝で合格)`,
+  },
+  rival: {
+    name: 'rival',
+    label: 'ライバル練習試合',
+    brain: 'decision',
+    note: '判断脳を鍛える(練習用・合格なし)。受け取ったキャラや過去の自分など、対戦相手プールのキャラと押し合う',
+    passCondition: 'なし(何度でも練習できる)',
+    createEpisode: (R, setup, genome, seed, sector, mode) => {
+      const self: FighterData = { blueprint: setup.blueprint, motor: needMotor(setup), decision: genome, controller: 'brain' };
+      if ((mode === 'train' && sector.index === sector.count - 1) || !setup.opponent) {
+        return new MatchEpisode(R, { mode: 'survive', seed, fighters: [self] });
+      }
+      return new MatchEpisode(R, { mode: 'push', seed, fighters: [self, setup.opponent] });
+    },
+    confirmEpisodes: PUSH_TASK.confirmMatches,
+    passed: () => false,
+    describe: (o) => `${o.length}戦${successCount(o)}勝`,
   },
 };
 
@@ -144,7 +189,7 @@ export interface EvalResult {
 /** 1個体を複数のシードで評価する。i 番目のエピソードの方向は全周を seeds.length 等分した i 番目 */
 export function evaluate(R: Rapier, task: TaskDef, setup: TaskSetup, genome: Float64Array, seeds: readonly number[]): EvalResult {
   const outs = runEpisodes(R, task, setup, genome, seeds, 'train');
-  const flags: EpisodeFlags = { stood: false, reached: false, crossed: false, survived60: false, won: false };
+  const flags: EpisodeFlags = { stood: false, reached: false, crossed: false, survived60: false, won: false, jumped: false };
   for (const o of outs) for (const k of Object.keys(flags) as (keyof EpisodeFlags)[]) flags[k] ||= o.flags[k];
   return {
     fitness: outs.reduce((s, o) => s + o.reward, 0) / outs.length,
@@ -177,19 +222,32 @@ export function levelPace(level: number): number {
   return paces[Math.min(paces.length, Math.max(1, level)) - 1];
 }
 
-/** メニューの解放順(仕様書セクション9)。穴をまたぐは追跡の合格後に挑戦できる任意メニュー */
-export const TASK_ORDER: readonly TaskName[] = ['move', 'chase', 'holes', 'survive', 'push'];
+/**
+ * メニューの解放順(仕様書セクション9)。運動脳:移動 → 追跡 →(ジャンプ・穴をまたぐ は任意)、
+ * 判断脳:危険なタイルを避ける → 生き残り → BOTとの押し合い → ライバル練習試合
+ */
+export const TASK_ORDER: readonly TaskName[] = ['move', 'chase', 'jump', 'holes', 'avoid', 'survive', 'push', 'rival'];
+
+/** 任意のメニュー(合格しなくても先に進める) */
+export const OPTIONAL_TASKS: readonly TaskName[] = ['jump', 'holes', 'rival'];
 
 export function isUnlocked(task: TaskName, passed: readonly TaskName[]): boolean {
+  // 一度合格したメニューは、あとから前提のメニューが増えても開いたままにする
+  if (passed.includes(task)) return true;
   switch (task) {
     case 'move':
       return true;
     case 'chase':
       return passed.includes('move');
+    case 'jump':
     case 'holes':
-    case 'survive':
+    case 'avoid':
       return passed.includes('chase');
+    case 'survive':
+      return passed.includes('avoid');
     case 'push':
       return passed.includes('survive');
+    case 'rival':
+      return passed.includes('push');
   }
 }

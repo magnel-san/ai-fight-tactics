@@ -33,6 +33,11 @@ export interface StageOptions {
   pace?: number;
   /** 最初から穴にしておくタイル */
   holes?: Hex[];
+  /**
+   * 崩落しても床として残す(トレーニング「危険なタイルを避ける」用)。崩れたタイルは「穴のかわりの踏んではいけないタイル」
+   * として目や足元には穴と同じに見えるが、落ちることはない
+   */
+  solid?: boolean;
 }
 
 export class Stage {
@@ -164,7 +169,12 @@ export class Stage {
   private collapse(t: Tile): void {
     t.state = 'collapsed';
     t.collapsedAt = this.time;
-    this.dirty = true;
+    if (!this.opts.solid) this.dirty = true;
+  }
+
+  /** 崩れたタイルを床として残すステージか */
+  get solid(): boolean {
+    return this.opts.solid ?? false;
   }
 
   /** ルールA:開始から一定時間後、一定間隔で安全半径が1ずつ縮み、円の外のタイルに危険マークがつく */

@@ -82,8 +82,8 @@ export class Trainer {
     this.ga = new GeneticAlgorithm(initialGenome, this.rng.nextU32(), { ...DEFAULT_GA_OPTIONS, population: size });
     this.setup = { ...setup };
     this.passed = alreadyPassed;
-    if (task === 'push') {
-      if (opponents.length === 0) throw new Error('押し合いの相手がいません');
+    if (task === 'push' || task === 'rival') {
+      if (opponents.length === 0) throw new Error(task === 'push' ? '押し合いの相手がいません' : '対戦相手プールにキャラを登録してください');
       this.setup.opponent = opponents[0].data;
     }
   }
@@ -113,12 +113,13 @@ export class Trainer {
 
   private stageLabel(): string {
     if (this.task === 'survive') return `レベル${this.setup.level}`;
-    if (this.task === 'push') return `相手:${this.opponents[this.opponentIndex].label}`;
+    if (this.task === 'push' || this.task === 'rival') return `相手:${this.opponents[this.opponentIndex].label}`;
     return '';
   }
 
   /** 合格の確認をするか(最優秀個体が評価エピソードで合格条件を満たしたとき) */
   private shouldConfirm(best: EvalResult): boolean {
+    if (this.task === 'rival') return false; // 練習用なので合格の確認はしない
     if (this.task === 'chase') return best.metricMean >= CHASE_TASK.passAlignment;
     return best.successCount >= 2;
   }
@@ -146,6 +147,11 @@ export class Trainer {
     const task = TASKS[this.task];
     while (this.running && this.pool) {
       const t0 = performance.now();
+      // ライバル練習試合は、世代ごとに対戦相手プールの相手を順番に替える
+      if (this.task === 'rival') {
+        this.opponentIndex = this.ga.generation % this.opponents.length;
+        this.setup.opponent = this.opponents[this.opponentIndex].data;
+      }
       const seeds = Array.from({ length: TRAINING.episodesPerGeneration }, () => this.rng.nextU32());
       const setup = { ...this.setup };
       const stageLabel = this.stageLabel();

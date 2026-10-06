@@ -1,7 +1,7 @@
 // エピソード(トレーニング1回分・試合1回分)の共通部分。
 // 物理を固定ステップで進め、3ステップに1回 think() を呼ぶ。観戦表示は fighters・target・stage を見て描画する。
 import type { World } from '@dimforge/rapier3d-compat';
-import { MILESTONE, PHYSICS } from '../config';
+import { MILESTONE, PHYSICS, SENSOR } from '../config';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
 import type { Fighter } from '../sim/fighter';
@@ -15,6 +15,7 @@ export interface EpisodeFlags {
   crossed: boolean;
   survived60: boolean;
   won: boolean;
+  jumped: boolean;
 }
 
 export interface EpisodeOutcome {
@@ -51,7 +52,7 @@ export abstract class EpisodeBase implements Episode {
   protected reward = 0;
   protected success = false;
   protected metric = 0;
-  protected flags: EpisodeFlags = { stood: false, reached: false, crossed: false, survived60: false, won: false };
+  protected flags: EpisodeFlags = { stood: false, reached: false, crossed: false, survived60: false, won: false, jumped: false };
   protected finished = false;
   private standTime = 0;
 
@@ -72,6 +73,8 @@ export abstract class EpisodeBase implements Episode {
     if (this.finished) return;
     if (this.step % PHYSICS.brainInterval === 0) {
       this.trackStanding();
+      // センサーブロックが地面に触れていたら減点(トレーニング用。バトルの勝敗には関係しない)
+      if (this.fighters[0] && !this.fighters[0].out && this.fighters[0].sensorTouching()) this.reward -= SENSOR.penaltyPerSec * BRAIN_DT;
       this.think();
       if (this.finished) return;
     }

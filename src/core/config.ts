@@ -41,7 +41,7 @@ export const CREATURE = {
   blockRoundness: 0.06,
 } as const;
 
-export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'grip' | 'piston';
+export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'grip' | 'piston' | 'sensor';
 
 export const BLOCKS: Record<
   BlockType,
@@ -53,6 +53,7 @@ export const BLOCKS: Record<
   bouncy: { cost: 2, mass: 0.8, friction: 0.8, restitution: 0.9 },
   grip: { cost: 2, mass: 1.0, friction: 2.0, restitution: 0.1 },
   piston: { cost: 3, mass: 0.6, friction: 0.8, restitution: 0.1 },
+  sensor: { cost: 1, mass: 0.5, friction: 0.8, restitution: 0.1 },
 };
 
 export const PHYSICS = {
@@ -127,6 +128,40 @@ export const CHASE_TASK = {
   passAlignment: 0.7,
 } as const;
 
+/** トレーニング「ジャンプ」(任意) */
+export const JUMP_TASK = {
+  timeLimit: 12,
+  /** 最初のジャンプ指令の時刻と間隔 [s]、指令を出し続ける長さ [s] */
+  firstAt: 1.5,
+  interval: 3,
+  pulse: 0.5,
+  /** 指令からこの時間のあいだの、コアの最高到達点の上がり幅を測る [s] */
+  window: 1.0,
+  /** 跳ぶ前の高さを測る時間 [s] */
+  baseline: 0.5,
+  /** 上がり幅 [m] にかける重み */
+  heightWeight: 10,
+  /** 指令がないのに跳ねたときの減点(上向きの速さがこれを超えたら) [m/s] と、その重み [/s] */
+  idleVelocity: 1,
+  idlePenalty: 1,
+  /** 合格条件:1回のジャンプでコアが上がった高さの平均 [m] */
+  passHeight: 0.25,
+} as const;
+
+/** トレーニング「危険なタイルを避ける」(崩れないステージで、危険なタイルを踏むと減点) */
+export const AVOID_TASK = {
+  timeLimit: 60,
+  /** 崩落ルールの進み方(生き残りのレベル3と同じ) */
+  pace: 0.6,
+  /** 安全なタイルの上での加点・危険マークのタイル・崩れたはずのタイル(穴のかわり)の上での減点 [/s] */
+  safeBonus: 1,
+  warningPenalty: 1,
+  forbiddenPenalty: 4,
+  fallPenalty: 20,
+  /** 合格条件:崩れたはずのタイルに触れていた時間の合計がこれ未満で、60秒落ちなかった [s] */
+  passForbiddenTime: 3,
+} as const;
+
 /** トレーニング「穴をまたぐ」(メニュー3) */
 export const HOLES_TASK = {
   /** 穴の列の位置(アキシャル座標の r)。スタートは r = startRow */
@@ -181,6 +216,14 @@ export const PUSH_TASK = {
   /** 合格の確認の試合数と、必要な勝ち数(勝率60%) */
   confirmMatches: 10,
   confirmWins: 6,
+} as const;
+
+/**
+ * センサーブロック(罰ブロック):トレーニング中に地面に触れていると減点する(バトルでは普通のブロックと同じ)。
+ * 2足歩行の頭など、地面に触れてほしくない場所に付けて「倒れないこと」を学ばせる
+ */
+export const SENSOR = {
+  penaltyPerSec: 2,
 } as const;
 
 /** マイルストーンの判定 */

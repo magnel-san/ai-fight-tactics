@@ -1,5 +1,6 @@
 // トレーニング「穴をまたぐ」(仕様書セクション9、メニュー3・任意)。
 // タイルのステージに1マス幅の穴の列を並べ、まっすぐ進む指令を出す。崩落ルールは使わない。
+// 穴が目の前に来たらジャンプ指令も出す(跳んで越えても、歩いて越えてもよい)。
 import { footing } from '../brain/decision';
 import { HOLES_TASK, PHYSICS, STAGE } from '../config';
 import type { Blueprint } from '../creature/blueprint';
@@ -65,7 +66,10 @@ export class HolesEpisode extends EpisodeBase {
       return;
     }
 
+    // まっすぐ進む指令。穴が目の前(足元の1点目)に来たらジャンプ指令も出す
     f.command = { dirX: 0, dirZ: 1, speed: 1 };
-    f.drive(t, footing(this.stage!, f));
+    const holes = footing(this.stage!, f);
+    f.command.jump = holes[0];
+    f.drive(t, holes);
   }
 }

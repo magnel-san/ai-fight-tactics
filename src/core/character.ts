@@ -26,7 +26,7 @@ export interface Character {
 }
 
 /** 運動脳を鍛えるメニュー(体を組み直すと合格が取り消される) */
-export const MOTOR_TASKS: readonly TaskName[] = ['move', 'chase', 'holes'];
+export const MOTOR_TASKS: readonly TaskName[] = ['move', 'chase', 'jump', 'holes'];
 
 export function newCharacter(name: string, blueprint: Blueprint): Character {
   return { name, blueprint, motor: null, decision: null, progress: { passed: [], generations: {} } };

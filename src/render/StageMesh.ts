@@ -9,6 +9,7 @@ const SAFE = new THREE.Color(0x5b6b82);
 const SAFE_ALT = new THREE.Color(0x52617a);
 const WARN = new THREE.Color(0xff4b4b);
 const FINAL = new THREE.Color(0xf2c94c);
+const FORBIDDEN = new THREE.Color(0x5a1c22);
 /** 崩落したタイルが落ちて消えるまでの時間 [s] */
 const FALL_TIME = 1.2;
 
@@ -55,7 +56,7 @@ export class StageMesh {
     s.tiles.forEach((t, i) => {
       let y = -h / 2;
       let scale = 1;
-      if (t.state === 'collapsed') {
+      if (t.state === 'collapsed' && !s.solid) {
         const since = s.time - t.collapsedAt;
         if (since >= FALL_TIME) scale = 0;
         else y -= 4 * since * since;
@@ -63,7 +64,10 @@ export class StageMesh {
       this.matrix.makeScale(scale, scale, scale).setPosition(t.x, y, t.z);
       this.tiles.setMatrixAt(i, this.matrix);
 
-      if (t.state === 'warning') {
+      if (t.state === 'collapsed' && s.solid) {
+        // 崩れても床として残るステージでは、踏んではいけないタイルを暗い赤で示す
+        this.color.copy(FORBIDDEN);
+      } else if (t.state === 'warning') {
         // 崩落が近いほど速く点滅する
         const progress = t.warnTime / STAGE.warningTime;
         const blink = 0.5 + 0.5 * Math.cos(t.warnTime * (6 + 18 * progress));

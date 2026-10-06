@@ -173,7 +173,7 @@ export function LibraryScene({ store, active, onPlayReplay, onBattle }: Props) {
 
       <section className="card">
         <h2>押し合いトレーニングの相手(対戦相手プール)</h2>
-        <p className="muted small">標準BOTに勝ったあと、ここに登録したキャラとも押し合いの練習をします。</p>
+        <p className="muted small">トレーニングの「ライバル練習試合」で、ここに登録したキャラと押し合いの練習をします。</p>
         <ul className="list">
           {store.pool.length === 0 && <li className="muted">まだありません。</li>}
           {store.pool.map((p) => (

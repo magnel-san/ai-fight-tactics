@@ -11,7 +11,7 @@ import { Rng } from '../../core/math/rng';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import type { Episode, EpisodeFlags } from '../../core/training/episode';
 import type { Sector } from '../../core/training/move';
-import { isUnlocked, TASK_ORDER, TASKS, type TaskName, type TaskSetup } from '../../core/training/tasks';
+import { isUnlocked, OPTIONAL_TASKS, TASK_ORDER, TASKS, type TaskName, type TaskSetup } from '../../core/training/tasks';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { loadHistory, newId, saveHistory, saveReplay, type HistoryPoint } from '../../storage/db';
 import { Trainer, type GenerationReport, type Opponent } from '../../training/Trainer';
@@ -34,8 +34,10 @@ interface Props {
   charId: string;
   character: Character;
   onChange(update: (c: Character) => Character): void;
-  /** 押し合いの相手(弱い順。標準BOTのあとに対戦相手プール) */
+  /** 押し合いの相手(弱い順:突進BOT → 標準BOT) */
   opponents: Opponent[];
+  /** ライバル練習試合の相手(対戦相手プール) */
+  rivals: Opponent[];
   active: boolean;
   /** 再生したいリプレイ(マイルストーンなど) */
   replayRequest: TrainReplay | null;
@@ -75,7 +77,7 @@ function withGenome(setup: TaskSetup, task: TaskName, genome: Float64Array): Tas
   return TASKS[task].brain === 'motor' ? { ...setup, motor: genome } : setup;
 }
 
-export function TrainScene({ charId, character, onChange, opponents, active, replayRequest }: Props) {
+export function TrainScene({ charId, character, onChange, opponents, rivals, active, replayRequest }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<EpisodeViewer | null>(null);
   const rapierRef = useRef<Rapier | null>(null);
@@ -137,6 +139,7 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
     }
     const setup = setupFor(c, t);
     if (t === 'push') setup.opponent = opponents[0]?.data ?? null;
+    if (t === 'rival') setup.opponent = rivals[0]?.data ?? null;
     replay.current = { task: t, genome: currentGenome(c, t), ghosts: [], seeds: [randomSeed()], setup, label: '今の脳の動き', cursor: 0 };
     latestTraining.current = null;
   };
@@ -288,6 +291,10 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
       setError('押し合いの相手(標準BOT)のデータがありません');
       return;
     }
+    if (t === 'rival' && rivals.length === 0) {
+      setError('対戦相手プールにキャラを登録してください(マイキャラ画面、またはバトルの後の「相手をトレーニングに登録」)');
+      return;
+    }
     // この学習を始める前までの世代数(観戦の表示に使う)
     const baseGeneration = c.progress.generations[t] ?? 0;
     try {
@@ -306,7 +313,7 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
           setError(e.message);
           setRunning(false);
         },
-        t === 'push' ? opponents : [],
+        t === 'push' ? opponents : t === 'rival' ? rivals : [],
         c.progress.passed.includes(t),
         undefined,
         population,
@@ -412,7 +419,7 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
               >
                 <span className="menu-title">
                   {i + 1}. {d.label}
-                  {t === 'holes' && <span className="optional">任意</span>}
+                  {OPTIONAL_TASKS.includes(t) && <span className="optional">任意</span>}
                 </span>
                 <span className="menu-meta">
                   {!unlocked ? '🔒 未解放' : passedList.includes(t) ? '✔ 合格' : `${d.brain === 'motor' ? '運動脳' : '判断脳'}`}
