@@ -43,6 +43,7 @@ export class MoveEpisode extends EpisodeBase {
    */
   constructor(R: Rapier, bp: Blueprint, motorGenome: Float64Array, seed: number, sector: Sector = { index: 0, count: 1 }) {
     super(R);
+    this.posture = true;
     const rng = new Rng(seed);
     addFlatGround(R, this.world);
     const yaw = rng.range(-Math.PI, Math.PI);

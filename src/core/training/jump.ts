@@ -21,6 +21,7 @@ export class JumpEpisode extends EpisodeBase {
 
   constructor(R: Rapier, bp: Blueprint, motorGenome: Float64Array, seed: number) {
     super(R);
+    this.posture = true;
     const rng = new Rng(seed);
     addFlatGround(R, this.world);
     this.fighter = new Fighter(R, this.world, bp, motorGenome, { position: { x: 0, y: spawnHeight(bp), z: 0 }, yaw: rng.range(-Math.PI, Math.PI) });

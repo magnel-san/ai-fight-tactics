@@ -21,6 +21,7 @@ export class HolesEpisode extends EpisodeBase {
 
   constructor(R: Rapier, bp: Blueprint, motorGenome: Float64Array, seed: number) {
     super(R);
+    this.posture = true;
     const rng = new Rng(seed);
     const holes = hexesWithin(STAGE.radius).filter((h) => (HOLES_TASK.holeRows as readonly number[]).includes(h.r));
     this.stage = new Stage(R, this.world, rng.nextU32(), { rules: false, holes });

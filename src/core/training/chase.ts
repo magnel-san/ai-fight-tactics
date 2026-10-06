@@ -24,6 +24,7 @@ export class ChaseEpisode extends EpisodeBase {
 
   constructor(R: Rapier, bp: Blueprint, motorGenome: Float64Array, seed: number, sector: Sector = { index: 0, count: 1 }) {
     super(R);
+    this.posture = true;
     this.rng = new Rng(seed);
     addFlatGround(R, this.world);
     const yaw = this.rng.range(-Math.PI, Math.PI);

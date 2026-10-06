@@ -1,7 +1,8 @@
 // エピソード(トレーニング1回分・試合1回分)の共通部分。
 // 物理を固定ステップで進め、3ステップに1回 think() を呼ぶ。観戦表示は fighters・target・stage を見て描画する。
 import type { RigidBody, World } from '@dimforge/rapier3d-compat';
-import { MILESTONE, PHYSICS, SENSOR } from '../config';
+import { MILESTONE, PHYSICS, POSTURE, SENSOR } from '../config';
+import { cos } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
 import type { Fighter } from '../sim/fighter';
@@ -69,6 +70,8 @@ export abstract class EpisodeBase implements Episode {
   protected flags: EpisodeFlags = { stood: false, reached: false, crossed: false, survived60: false, won: false, jumped: false };
   protected finished = false;
   private standTime = 0;
+  /** 姿勢の報酬を使うか(運動脳のトレーニングで true にする) */
+  protected posture = false;
 
   constructor(R: Rapier) {
     this.world = new R.World({ x: 0, y: PHYSICS.gravity, z: 0 });
@@ -89,6 +92,7 @@ export abstract class EpisodeBase implements Episode {
       this.trackStanding();
       // センサーブロックが地面に触れていたら減点(トレーニング用。バトルの勝敗には関係しない)
       if (this.fighters[0] && !this.fighters[0].out && this.fighters[0].sensorTouching()) this.reward -= SENSOR.penaltyPerSec * BRAIN_DT;
+      if (this.posture && this.fighters[0] && !this.fighters[0].out) this.applyPosture();
       this.think();
       if (this.finished) return;
     }
@@ -114,6 +118,20 @@ export abstract class EpisodeBase implements Episode {
 
   protected finish(): void {
     this.finished = true;
+  }
+
+  /** 姿勢の報酬:コアの傾きと、前後・左右に転がる回転の速さで減点する(向きを変える回転は減点しない) */
+  private applyPosture(): void {
+    const core = this.fighters[0].core;
+    const up = rotate(core.rotation(), 0, 1, 0);
+    const w = core.angvel();
+    const roll = Math.sqrt(w.x * w.x + w.z * w.z);
+    // 傾き(1 − cos θ)と転がる回転の速さのうち、許容範囲を超えた分だけを 0〜1 にして減点する
+    const tilt = 1 - Math.max(-1, Math.min(1, up[1]));
+    const tiltFree = 1 - cos(POSTURE.tiltFree);
+    const tiltOver = Math.max(0, Math.min(1, (tilt - tiltFree) / (1 - tiltFree)));
+    const rollOver = Math.max(0, Math.min(1, (roll - POSTURE.rollFree) / (POSTURE.rollScale - POSTURE.rollFree)));
+    this.reward -= (POSTURE.tiltWeight * tiltOver + POSTURE.rollWeight * rollOver) * BRAIN_DT;
   }
 
   /** 「初めて立った」の判定:コアが上を向き、一定の高さを一定時間保ったか */

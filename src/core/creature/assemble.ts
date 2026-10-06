@@ -46,13 +46,15 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
   const rotation = { x: 0, y: sin(pose.yaw / 2), z: 0, w: cos(pose.yaw / 2) };
 
   // 剛体:セグメントの根ブロックの位置を剛体の原点にする
-  const bodies = segments.map((seg) => {
+  const bodies = segments.map((seg, si) => {
     const [lx, ly, lz] = pos[seg.root].map((v) => v * size);
     const desc = R.RigidBodyDesc.dynamic()
       .setTranslation(pose.position.x + cy * lx + sy * lz, pose.position.y + ly, pose.position.z - sy * lx + cy * lz)
       .setRotation(rotation)
       // スリープによる挙動の差をなくすため、キャラの剛体は眠らせない
       .setCanSleep(false);
+    // コアの剛体だけ回転にブレーキをかける(関節の反動でコアが回りすぎないように)
+    if (si === 0) desc.setAngularDamping(CREATURE.coreAngularDamping);
     return world.createRigidBody(desc);
   });
 

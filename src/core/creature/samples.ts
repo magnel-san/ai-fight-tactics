@@ -58,7 +58,19 @@ export const JUMPER: Blueprint = {
   blocks: [...QUADRUPED.blocks, { id: 11, type: 'piston', parent: 0, face: '-y' }],
 };
 
+/** 左右に1本ずつ脚を付けた2本脚。関節を同じ向きに振るとコアが前後に揺れやすい。コスト10、関節2 */
+export const BIPED: Blueprint = {
+  blocks: [
+    { id: 0, type: 'core', parent: null },
+    { id: 1, type: 'joint', parent: 0, face: '+x', axis: 'x' },
+    { id: 2, type: 'grip', parent: 1, face: '-y' },
+    { id: 3, type: 'joint', parent: 0, face: '-x', axis: 'x' },
+    { id: 4, type: 'grip', parent: 3, face: '-y' },
+  ],
+};
+
 export const SAMPLES: Record<string, Blueprint> = {
+  biped: BIPED,
   jumper: JUMPER,
   quadruped: QUADRUPED,
   standard: STANDARD_BODY,
