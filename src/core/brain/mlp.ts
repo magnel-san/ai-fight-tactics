@@ -54,3 +54,20 @@ export function mlpInit(s: MlpShape, rng: Rng, params: Float64Array, offset: num
   for (let i = 0; i < s.outputs * s.hidden; i++) params[p++] = roundF16(rng.gaussian() * s2);
   for (let i = 0; i < s.outputs; i++) params[p++] = 0;
 }
+
+/**
+ * 入力の数や並びが変わったときに、重みを新しい形に移す(データ形式の移行用)。
+ * inputMap[i] は古い入力 i が新しい形で何番目になるか。新しく増えた入力の重みは0にするので、
+ * 増えた入力は出力に影響せず、古い脳とまったく同じ動きになる。隠れ層と出力の数は同じであること
+ */
+export function remapInputs(old: Float64Array, from: MlpShape, to: MlpShape, inputMap: readonly number[]): Float64Array {
+  if (from.hidden !== to.hidden || from.outputs !== to.outputs) throw new Error('隠れ層と出力の数が違う脳は移行できません');
+  if (old.length !== mlpParamCount(from)) throw new Error(`重みの数が違います:${old.length}`);
+  const out = new Float64Array(mlpParamCount(to));
+  for (let h = 0; h < from.hidden; h++) {
+    for (let i = 0; i < from.inputs; i++) out[h * to.inputs + inputMap[i]] = old[h * from.inputs + i];
+  }
+  // 隠れ層のバイアス・出力層の重みとバイアスはそのまま
+  out.set(old.subarray(from.hidden * from.inputs), to.hidden * to.inputs);
+  return out;
+}

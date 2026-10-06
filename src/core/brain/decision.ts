@@ -1,5 +1,5 @@
 // 判断脳(仕様書セクション7)。体に依存せず、「どの方向へどの速さで進むか」を決めて運動脳に指令する。
-// 入力35:周囲タイル19・自分3・相手7・安全円5・時間1。出力3:進む方向(コア基準の水平2成分)と速さ。
+// 入力77:周囲タイル61(4周分)・自分3・相手7・安全円5・時間1。出力3:進む方向(コア基準の水平2成分)と速さ。
 import { BATTLE, BRAIN, STAGE } from '../config';
 import type { Rng } from '../math/rng';
 import type { Fighter } from '../sim/fighter';
@@ -24,11 +24,14 @@ export function createDecisionGenome(rng: Rng): Float64Array {
   return g;
 }
 
+/** 目で見るタイルの、コアを中心とした六角格子の位置(4周分 = 61点。並び順は hexesWithin の順) */
+export const EYE_HEXES = hexesWithin(BRAIN.eyeRings);
+
 /**
- * 目:コアを中心とした六角格子2周分(19点)の位置。コアの向きに合わせて回転させて使う。
+ * 目:EYE_HEXES のワールド座標での位置。コアの向きに合わせて回転させて使う。
  * x はコアの +x 方向、z は正面方向の距離 [m]
  */
-export const EYE_OFFSETS: readonly { x: number; z: number }[] = hexesWithin(2).map((h) =>
+export const EYE_OFFSETS: readonly { x: number; z: number }[] = EYE_HEXES.map((h) =>
   hexToWorld(h, STAGE.tileCircumradius),
 );
 

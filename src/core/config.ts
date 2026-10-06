@@ -25,6 +25,11 @@ export const CREATURE = {
    * 隣り合う別剛体のブロック同士が常に接触して震えるのを防ぐ
    */
   colliderShrink: 0.01,
+  /**
+   * ブロックの当たり判定の角の丸み [m]。角が立っていると穴の縁やタイルの境目に引っかかりやすいので、
+   * 外形の大きさは変えずに角を丸める
+   */
+  blockRoundness: 0.06,
 } as const;
 
 export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'grip';
@@ -77,6 +82,11 @@ export const STAGE = {
   /** タイルの厚さ [m](上面が y = 0) */
   tileHeight: 0.4,
   tileFriction: 0.8,
+  /**
+   * ルールB:ブロックの中心の高さがこれ以下なら、そのブロックは真下のタイルに「触れている」とみなす [m]。
+   * 置いたブロックの中心は 0.2m(ブロックの半分)なので、少し余裕をもたせる
+   */
+  stayContactHeight: 0.3,
 } as const;
 
 export const BATTLE = {
@@ -142,8 +152,19 @@ export const SURVIVE_TASK = {
 export const PUSH_TASK = {
   /** トレーニング中の試合時間 [s](本番の試合より短くして学習を速くする) */
   timeLimit: 60,
-  winBonus: 20,
-  losePenalty: 20,
+  /**
+   * 勝ち負けの報酬。見ていて楽しい「押し出し」を重く、相手の自滅による勝ちは軽くする
+   * (押し出し = 2体のブロックが触れてから2秒以内に落ちた)
+   */
+  winPushBonus: 30,
+  winFallBonus: 5,
+  losePushedPenalty: 30,
+  loseFellPenalty: 20,
+  /** 相手に近づいた距離にかける重み [/m](この距離より離れているときだけ) */
+  approachWeight: 0.5,
+  approachRange: 1.5,
+  /** 相手に触れている間の加点 [/s] */
+  contactBonus: 1,
   /** 相手を危険な場所へ近づけた量にかける重み */
   pushWeight: 2,
   aliveBonus: 0.2,
@@ -164,7 +185,10 @@ export const BRAIN = {
   /** 運動脳の入力のうち、関節数によらない部分(指令3・姿勢3・速度6・リズム2・足元3) */
   motorFixedInputs: 17,
   motorHidden: 32,
-  decisionInputs: 35,
+  /** 判断脳の「目」:コアのまわり何周分のタイルを見るか(4周 = 61マス) */
+  eyeRings: 4,
+  /** 判断脳の入力:目61・自分3・相手7・安全円5・時間1 */
+  decisionInputs: 77,
   decisionHidden: 24,
   decisionOutputs: 3,
   /** センサー値を -1〜1 程度にそろえるための目安 */

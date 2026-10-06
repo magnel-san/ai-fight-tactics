@@ -1,14 +1,21 @@
 // キャラのJSON形式(仕様書セクション12)。重みは float16 のバイト列を base64 にして持つ。
 // 形式を変えたときは version を上げ、migrate() に移行処理を書く。
 // 受け取ったデータは信用せず、parseCharacter() で形と値を検証してから使う(不正対策)。
-import { decisionGenomeLength, DECISION_SHAPE } from './brain/decision';
+import { decisionGenomeLength, DECISION_SHAPE, EYE_HEXES } from './brain/decision';
+import { remapInputs } from './brain/mlp';
+import { hexesWithin } from './stage/hex';
 import { fromF16Bits, toF16Bits } from './brain/f16';
 import { motorGenomeLength, motorShape, rhythmPeriod } from './brain/motor';
 import type { Character, Progress } from './character';
 import { jointCount, validate, type Blueprint, type BlockSpec } from './creature/blueprint';
 import { TASK_ORDER, type TaskName } from './training/tasks';
 
-export const FORMAT_VERSION = 1;
+/**
+ * 形式のバージョン
+ *   1:最初の形式(判断脳の入力35、目は2周19マス)
+ *   2:判断脳の目を4周61マスに広げた(入力77)
+ */
+export const FORMAT_VERSION = 2;
 
 interface BrainJson {
   inputs: number;
@@ -101,10 +108,27 @@ export function characterToJson(c: Character): CharacterJson {
   };
 }
 
-/** 古い形式を新しい形式に直す(今は version 1 のみ) */
-function migrate(json: { version?: unknown }): CharacterJson {
-  if (json.version === FORMAT_VERSION) return json as CharacterJson;
+/** 古い形式を新しい形式に直す。重みは移し替えるだけなので、移行しても動きは変わらない */
+function migrate(input: { version?: unknown }): CharacterJson {
+  let json = input as CharacterJson;
+  if (json.version === 1) json = migrate1to2(json);
+  if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
+}
+
+/** 1 → 2:判断脳の目を2周19マスから4周61マスへ。古い目の重みは同じマスへ移し、増えたマスの重みは0にする */
+function migrate1to2(json: CharacterJson): CharacterJson {
+  const d = json.brains?.decision;
+  if (!d || typeof d.weights !== 'string') return { ...json, version: 2 };
+  const oldEye = hexesWithin(2);
+  const oldShape = { inputs: 35, hidden: DECISION_SHAPE.hidden, outputs: DECISION_SHAPE.outputs };
+  const inputMap = Array.from({ length: oldShape.inputs }, (_, i) =>
+    i < oldEye.length
+      ? EYE_HEXES.findIndex((h) => h.q === oldEye[i].q && h.r === oldEye[i].r)
+      : EYE_HEXES.length + (i - oldEye.length),
+  );
+  const weights = remapInputs(decodeWeights(d.weights), oldShape, DECISION_SHAPE, inputMap);
+  return { ...json, version: 2, brains: { ...json.brains, decision: { ...DECISION_SHAPE, weights: encodeWeights(weights) } } };
 }
 
 const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'grip']);

@@ -31,10 +31,10 @@ describe('キャラのJSON', () => {
   it('キャラの往復で、体・脳・育成状況が一致する', () => {
     const c = sample();
     const json = characterToJson(c);
-    expect(json.version).toBe(1);
+    expect(json.version).toBe(2);
     expect(json.brains.motor!.inputs).toBe(25);
     expect(json.brains.motor!.outputs).toBe(4);
-    expect(json.brains.decision!.inputs).toBe(35);
+    expect(json.brains.decision!.inputs).toBe(77);
     const back = parseCharacter(JSON.stringify(json));
     expect(back.name).toBe(c.name);
     expect(back.blueprint).toEqual(c.blueprint);
@@ -99,5 +99,38 @@ describe('試合のリプレイ', () => {
     expect([...back.fighters[0].decision!]).toEqual([...me.decision!]);
     expect(back.fighters[1].controller).toBe('rush');
     expect(() => parseReplay('{"kind":"other"}')).toThrow();
+  });
+});
+
+describe('形式の移行 1 → 2(判断脳の目を4周に)', () => {
+  it('移行した判断脳は、増えたマスの値に関係なく古い脳と同じ出力になる', async () => {
+    const { mlpForward, mlpInit } = await import('../src/core/brain/mlp');
+    const { DECISION_SHAPE, EYE_HEXES } = await import('../src/core/brain/decision');
+    const { hexesWithin } = await import('../src/core/stage/hex');
+    const { roundF16Array } = await import('../src/core/brain/f16');
+    const oldShape = { inputs: 35, hidden: DECISION_SHAPE.hidden, outputs: DECISION_SHAPE.outputs };
+    const oldW = new Float64Array(24 * 35 + 24 + 3 * 24 + 3);
+    mlpInit(oldShape, new Rng(9), oldW, 0);
+    for (let i = 24 * 35; i < 24 * 35 + 24; i++) oldW[i] = 0.1; // バイアスも移ることを確かめる
+    roundF16Array(oldW);
+    const v1 = { ...characterToJson(sample()), version: 1 };
+    v1.brains.decision = { inputs: 35, hidden: 24, outputs: 3, weights: encodeWeights(oldW) };
+    const c = parseCharacter(v1);
+    expect(c.decision!.length).toBe(24 * 77 + 24 + 3 * 24 + 3);
+
+    const rng = new Rng(4);
+    const oldEye = hexesWithin(2);
+    for (let trial = 0; trial < 5; trial++) {
+      const oldIn = Array.from({ length: 35 }, () => rng.range(-1, 1));
+      const newIn = Array.from({ length: 77 }, () => rng.range(-1, 1)); // 増えたマスはでたらめな値
+      oldEye.forEach((h, i) => (newIn[EYE_HEXES.findIndex((e) => e.q === h.q && e.r === h.r)] = oldIn[i]));
+      for (let i = 19; i < 35; i++) newIn[61 + (i - 19)] = oldIn[i];
+      const a = new Float64Array(3);
+      const b = new Float64Array(3);
+      mlpForward(oldShape, oldW, 0, oldIn, new Float64Array(24), a);
+      mlpForward(DECISION_SHAPE, c.decision!, 0, newIn, new Float64Array(24), b);
+      expect([...b]).toEqual([...a]);
+    }
+    expect(characterToJson(c).version).toBe(2);
   });
 });

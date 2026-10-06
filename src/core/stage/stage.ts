@@ -123,7 +123,8 @@ export class Stage {
   }
 
   /**
-   * dt 秒進める。occupants は各キャラのコアの位置(脱落したキャラは含めない)
+   * dt 秒進める。occupants は地面に触れているブロックの位置(脱落したキャラは含めない)。
+   * 同じタイルに複数のブロックが触れていても、そのタイルのタイマーは1回分だけ溜まる
    */
   update(dt: number, occupants: readonly { x: number; z: number }[]): void {
     this.time += dt;
@@ -177,7 +178,7 @@ export class Stage {
     for (const t of this.tiles) if (this.isOutsideSafe(t)) this.warn(t);
   }
 
-  /** ルールB:コアの真下のタイルに滞在タイマーが溜まり、離れると半分の速さで減る */
+  /** ルールB:キャラのブロックが触れているタイルに滞在タイマーが溜まり、離れると半分の速さで減る */
   private updateStay(dt: number, occupants: readonly { x: number; z: number }[]): void {
     const under = new Set<Tile>();
     for (const p of occupants) {

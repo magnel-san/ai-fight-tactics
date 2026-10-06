@@ -1,5 +1,6 @@
 // キャラの見た目。剛体ごとにグループを作り、毎フレーム剛体の位置・回転を写す。
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { BlockType } from '../core/config';
 import { CREATURE } from '../core/config';
 import type { Creature } from '../core/creature/assemble';
@@ -39,7 +40,8 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
 
   // 見た目は物理のコライダーより少しだけ小さくして、ブロックの境目が分かるようにする
   const size = CREATURE.blockSize - CREATURE.colliderShrink * 2;
-  const geometry = new THREE.BoxGeometry(size, size, size);
+  // 当たり判定と同じく角を丸める
+  const geometry = new RoundedBoxGeometry(size, size, size, 2, CREATURE.blockRoundness);
   const materials = new Map<BlockType, THREE.MeshStandardMaterial>();
   const material = (type: BlockType) => {
     let m = materials.get(type);

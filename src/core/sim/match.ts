@@ -52,6 +52,7 @@ export class MatchEpisode extends EpisodeBase {
   private causes: (FallCause | null)[];
   private lastContact = -Infinity;
   private prevPush = 0;
+  private prevOpponentDist: number | null = null;
   /** 外から指令を与える(手書きのルールのBOTや検証用)。null を返したキャラは通常どおり判断する */
   externalCommand: ((i: number, f: Fighter) => MotorCommand | null) | null = null;
 
@@ -124,8 +125,9 @@ export class MatchEpisode extends EpisodeBase {
     if (this.options.mode === 'survive') {
       if (me.out) this.reward -= SURVIVE_TASK.fallPenalty;
     } else if (this.options.mode === 'push') {
-      if (winner === 0) this.reward += PUSH_TASK.winBonus;
-      else if (winner === 1) this.reward -= PUSH_TASK.losePenalty;
+      // 押し出して勝つと大きく、相手の自滅で勝つと小さく加点。押し出されて負けると大きく減点
+      if (winner === 0) this.reward += this.causes[1] === 'pushed' ? PUSH_TASK.winPushBonus : PUSH_TASK.winFallBonus;
+      else if (winner === 1) this.reward -= this.causes[0] === 'pushed' ? PUSH_TASK.losePushedPenalty : PUSH_TASK.loseFellPenalty;
     }
     if (this.options.mode === 'battle' || this.options.mode === 'push') {
       this.success = winner === 0;
@@ -171,14 +173,15 @@ export class MatchEpisode extends EpisodeBase {
     const stage = this.stage!;
     const t = this.time;
 
-    // ステージを進める(脱落していないキャラのコアの位置で滞在タイマーを溜める)
+    // ステージを進める(脱落していないキャラの、地面に触れているすべてのブロックの位置で滞在タイマーを溜める)
     stage.update(
       BRAIN_DT,
-      this.fighters.filter((f) => !f.out).map((f) => f.position()),
+      this.fighters.filter((f) => !f.out).flatMap((f) => f.groundContacts()),
     );
 
     // 接触の記録(2体のブロック同士が実際に触れているか)
-    if (this.fighters.length === 2 && !this.fighters[0].out && !this.fighters[1].out && this.touching()) this.lastContact = t;
+    const touchingNow = this.fighters.length === 2 && !this.fighters[0].out && !this.fighters[1].out && this.touching();
+    if (touchingNow) this.lastContact = t;
 
     // 報酬(0番から見た値)
     const me = this.fighters[0];
@@ -196,6 +199,15 @@ export class MatchEpisode extends EpisodeBase {
           const push = this.dangerOf(opp);
           if (t > 0) this.reward += PUSH_TASK.pushWeight * (push - this.prevPush);
           this.prevPush = push;
+          // 相手を追いかける:離れているときは近づいた距離、触れている間は時間で加点
+          const a = me.position();
+          const b = opp.position();
+          const dist = Math.sqrt((a.x - b.x) ** 2 + (a.z - b.z) ** 2);
+          if (this.prevOpponentDist !== null && dist > PUSH_TASK.approachRange) {
+            this.reward += PUSH_TASK.approachWeight * (this.prevOpponentDist - dist);
+          }
+          this.prevOpponentDist = dist;
+          if (touchingNow) this.reward += PUSH_TASK.contactBonus * BRAIN_DT;
         }
       }
     }

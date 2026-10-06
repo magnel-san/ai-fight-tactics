@@ -63,7 +63,9 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
     ];
     localOffsets.push(offset);
     const spec = BLOCKS[b.type];
-    const desc = R.ColliderDesc.cuboid(half, half, half)
+    // 角を丸めた立方体(外形は 2 × half のまま、角を半径 blockRoundness で丸める)
+    const r = CREATURE.blockRoundness;
+    const desc = R.ColliderDesc.roundCuboid(half - r, half - r, half - r, r)
       .setTranslation(offset[0], offset[1], offset[2])
       .setMass(spec.mass)
       .setFriction(spec.friction)

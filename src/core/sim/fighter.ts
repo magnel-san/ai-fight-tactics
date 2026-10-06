@@ -6,6 +6,7 @@ import { setJointTargets, spawnCreature, type Creature, type SpawnPose } from '.
 import type { Blueprint } from '../creature/blueprint';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
+import { STAGE } from '../config';
 
 export class Fighter {
   readonly creature: Creature;
@@ -34,6 +35,23 @@ export class Fighter {
   /** この体の剛体のハンドル(接触の相手が自分の体かどうかの判定に使う) */
   bodyHandles(): Set<number> {
     return new Set(this.creature.bodies.map((b) => b.handle));
+  }
+
+  /**
+   * 地面(タイルの上面 y = 0)に触れているブロックの水平位置。崩落ルールBの滞在タイマーに使う
+   * (コアだけでなく、どのブロックでも触れているタイルにタイマーが溜まる)
+   */
+  groundContacts(): { x: number; z: number }[] {
+    const c = this.creature;
+    const out: { x: number; z: number }[] = [];
+    c.localOffsets.forEach((o, i) => {
+      const body = c.bodies[c.segmentOf[i]];
+      const t = body.translation();
+      const [dx, dy, dz] = rotate(body.rotation(), o[0], o[1], o[2]);
+      const y = t.y + dy;
+      if (y <= STAGE.stayContactHeight && y > -STAGE.tileHeight) out.push({ x: t.x + dx, z: t.z + dz });
+    });
+    return out;
   }
 
   position(): { x: number; y: number; z: number } {

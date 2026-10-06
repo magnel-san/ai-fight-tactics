@@ -187,8 +187,8 @@ describe('判断脳の入力と試合', () => {
     R = await initRapier();
   });
 
-  it('目は19点、入力は35個', () => {
-    expect(EYE_OFFSETS.length).toBe(19);
+  it('目は4周61点、入力は77個', () => {
+    expect(EYE_OFFSETS.length).toBe(61);
     const world = new R.World({ x: 0, y: -9.81, z: 0 });
     const stage = new Stage(R, world, 1, { rules: true });
     const f = new Fighter(R, world, QUADRUPED, createMotorGenome(4, new Rng(1)), { position: { x: 0, y: 1, z: 0 }, yaw: 0.3 });

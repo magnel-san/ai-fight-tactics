@@ -3,6 +3,7 @@
 // 左クリックで面に配置、右ドラッグでカメラ回転、ホイールでズーム。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CREATURE, type BlockType } from '../../core/config';
 import { AXIS_DIR, blockPositions, centerOfMass, type Blueprint, type Face, type Vec3i } from '../../core/creature/blueprint';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
@@ -54,7 +55,7 @@ export class EditorView {
   private grid: THREE.GridHelper;
   /** 床に置く「正面」の矢印。コアの正面マークがブロックに隠れても向きが分かるようにする */
   private frontArrow: THREE.Mesh;
-  private blockGeometry = new THREE.BoxGeometry(SIZE * 0.98, SIZE * 0.98, SIZE * 0.98);
+  private blockGeometry = new RoundedBoxGeometry(SIZE * 0.98, SIZE * 0.98, SIZE * 0.98, 2, CREATURE.blockRoundness);
   private axisGeometry = new THREE.CylinderGeometry(0.025, 0.025, SIZE * 1.3, 8);
   private axisMaterial = new THREE.MeshBasicMaterial({ color: 0x0b3954 });
   private frontGeometry = new THREE.BoxGeometry(SIZE * 0.5, SIZE * 0.2, 0.02);

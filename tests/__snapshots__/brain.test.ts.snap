@@ -25,7 +25,7 @@ exports[`トレーニング「目標地点への移動」 > 同じ遺伝子・�
       "won": false,
     },
   ],
-  "fitness": 0.6395769003182133,
+  "fitness": 1.0392727899659722,
   "flags": {
     "crossed": false,
     "reached": false,
