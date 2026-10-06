@@ -8,6 +8,7 @@ import { MatchEpisode, type MatchResult } from '../../core/sim/match';
 import type { FighterData } from '../../core/training/tasks';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { downloadReplay, replayShareUrl } from '../../storage/share';
+import { deleteReplay, listReplays, type StoredReplay } from '../../storage/db';
 import { TEAM_COLORS } from '../../render/creatureMesh';
 
 export interface OpponentEntry {
@@ -70,6 +71,7 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
   const [hud, setHud] = useState<Hud | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [saved, setSaved] = useState<StoredReplay[]>([]);
   const lastHud = useRef(0);
   const finishedRef = useRef(onFinished);
   finishedRef.current = onFinished;
@@ -107,6 +109,15 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
   useEffect(() => {
     if (viewerRef.current) viewerRef.current.speed = active ? speed : 0;
   }, [speed, active]);
+
+  // 保存した試合のリプレイ(表示したとき・試合が終わったときに読み直す)
+  useEffect(() => {
+    if (!active) return;
+    const timer = setTimeout(() => {
+      void listReplays().then((all) => setSaved(all.filter((r) => r.kind === 'battle').slice(0, 20)));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [active, result]);
 
   const play = (rec: BattleRecord, skipToEnd = false) => {
     const R = rapierRef.current;
@@ -234,6 +245,31 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
             </div>
             {reviewHint(result) && <p className="hint">{reviewHint(result)}</p>}
           </div>
+        )}
+
+        <h3>リプレイ(最近の試合)</h3>
+        {saved.length === 0 ? (
+          <p className="muted small">試合が終わると自動で保存されます</p>
+        ) : (
+          <ul className="replay-list">
+            {saved.map((r) => (
+              <li key={r.id}>
+                <button className="link" onClick={() => play(r.data as BattleRecord)} title={new Date(r.createdAt).toLocaleString()}>
+                  ▶ {r.title}
+                </button>
+                <button
+                  className="danger small-button"
+                  title="このリプレイを削除"
+                  onClick={async () => {
+                    await deleteReplay(r.id);
+                    setSaved((list) => list.filter((x) => x.id !== r.id));
+                  }}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
 
         <h3>ルール</h3>

@@ -131,6 +131,15 @@ export class EpisodeViewer {
     this.moveFocus(this.focus, true);
   }
 
+  /** 何も表示しない状態にする(表示できるエピソードがないとき) */
+  showNothing(): void {
+    this.clear();
+    this.targetMarker.visible = false;
+    this.floor.visible = true;
+    this.trailPoints = [];
+    this.trail.geometry.setFromPoints([]);
+  }
+
   get currentEpisode(): Episode | null {
     return this.main?.episode ?? null;
   }

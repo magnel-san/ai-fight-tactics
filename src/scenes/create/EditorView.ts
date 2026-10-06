@@ -19,6 +19,8 @@ export interface EditorHandlers {
   onPlace(parent: number, face: Face): void;
   /** マウスの下にあるブロックが変わった */
   onHover(id: number | null): void;
+  /** 右クリック(ドラッグしない)でブロックを選んだ。何もないところなら null */
+  onSelect(id: number | null): void;
 }
 
 const SIZE = CREATURE.blockSize;
@@ -44,6 +46,9 @@ export class EditorView {
   private blocksGroup = new THREE.Group();
   private ghostGroup = new THREE.Group();
   private hoverOutline: THREE.LineSegments;
+  /** 選択中のブロックの枠(黄色) */
+  private selectOutline: THREE.LineSegments;
+  private selected: number | null = null;
   private mirrorPlane: THREE.Mesh;
   private comMarker: THREE.Mesh;
   private grid: THREE.GridHelper;
@@ -61,6 +66,7 @@ export class EditorView {
   private ghostType: BlockType = 'base';
   private hovered: { id: number; face: Face } | null = null;
   private downAt: { x: number; y: number } | null = null;
+  private rightDownAt: { x: number; y: number } | null = null;
   /** 最後のマウス位置(キャンバス外なら null)。設計図が変わったときの再判定に使う */
   private lastPointer: { clientX: number; clientY: number } | null = null;
   private frame = 0;
@@ -96,6 +102,12 @@ export class EditorView {
     this.hoverOutline = new THREE.LineSegments(outlineGeometry, outlineMaterial);
     this.hoverOutline.visible = false;
     this.scene.add(this.hoverOutline);
+    const selectMaterial = new THREE.LineBasicMaterial({ color: 0xf2c94c, depthTest: false });
+    this.selectOutline = new THREE.LineSegments(outlineGeometry, selectMaterial);
+    this.selectOutline.renderOrder = 11;
+    this.selectOutline.visible = false;
+    this.scene.add(this.selectOutline);
+    this.disposables.push(selectMaterial);
 
     const planeGeometry = new THREE.PlaneGeometry(6, 6);
     const planeMaterial = new THREE.MeshBasicMaterial({
@@ -186,7 +198,25 @@ export class EditorView {
     this.frontArrow.position.set(0, this.grid.position.y + 0.005, (maxZ + 1.5) * SIZE);
     // ブロックが増減するとマウスの下のブロックも変わるので、マウスを動かさなくても判定し直す
     this.updateHovered(this.lastPointer ? this.pick(this.lastPointer) : null);
+    this.updateSelectOutline();
     this.updateGhost();
+  }
+
+  /** 選択中のブロックを表示する(null で選択なし) */
+  setSelected(id: number | null): void {
+    this.selected = id;
+    this.updateSelectOutline();
+  }
+
+  private updateSelectOutline(): void {
+    const id = this.selected;
+    if (id === null || !this.blueprint.blocks[id]) {
+      this.selectOutline.visible = false;
+      return;
+    }
+    const p = blockPositions(this.blueprint)[id];
+    this.selectOutline.position.set(p[0] * SIZE, p[1] * SIZE, p[2] * SIZE);
+    this.selectOutline.visible = true;
   }
 
   setSymmetric(on: boolean): void {
@@ -289,9 +319,17 @@ export class EditorView {
 
   private onPointerDown = (e: PointerEvent) => {
     if (e.button === 0) this.downAt = { x: e.clientX, y: e.clientY };
+    if (e.button === 2) this.rightDownAt = { x: e.clientX, y: e.clientY };
   };
 
   private onPointerUp = (e: PointerEvent) => {
+    // 右ボタン:ドラッグしていなければ選択(ドラッグはカメラの回転)
+    if (e.button === 2 && this.rightDownAt) {
+      const moved = Math.hypot(e.clientX - this.rightDownAt.x, e.clientY - this.rightDownAt.y);
+      this.rightDownAt = null;
+      if (moved <= CLICK_TOLERANCE) this.handlers.onSelect(this.pick(e)?.id ?? null);
+      return;
+    }
     if (e.button !== 0 || !this.downAt) return;
     const moved = Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y);
     this.downAt = null;

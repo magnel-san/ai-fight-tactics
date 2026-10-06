@@ -53,14 +53,16 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   const [axis, setAxis] = useState<Axis>('x');
   const [symmetric, setSymmetric] = useState(true);
   const [hovered, setHovered] = useState<number | null>(null);
+  /** 右クリックで選んだブロック */
+  const [selected, setSelected] = useState<number | null>(null);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const undoStack = useRef<Blueprint[]>([]);
   const redoStack = useRef<Blueprint[]>([]);
   const [, forceRender] = useState(0);
 
   // イベントハンドラから常に最新の値を読むための参照
-  const latest = useRef({ blueprint, type, axis, symmetric, hovered });
-  latest.current = { blueprint, type, axis, symmetric, hovered };
+  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected });
+  latest.current = { blueprint, type, axis, symmetric, hovered, selected };
 
   const commit = useCallback(
     (result: EditResult) => {
@@ -112,6 +114,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         commit(sym ? addBlockSymmetric(bp, parent, face, t, a) : addBlock(bp, parent, face, t, a));
       },
       onHover: setHovered,
+      onSelect: setSelected,
     });
     viewRef.current = view;
     return () => {
@@ -121,6 +124,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   }, [commit]);
 
   useEffect(() => viewRef.current?.setBlueprint(blueprint), [blueprint]);
+  useEffect(() => viewRef.current?.setSelected(selected), [selected]);
+  // ブロックが増減するとIDが詰め直されるので、選択を解除する
+  useEffect(() => setSelected(null), [blueprint.blocks.length]);
   useEffect(() => viewRef.current?.setSymmetric(symmetric), [symmetric]);
   useEffect(() => viewRef.current?.setGhostType(type), [type]);
   useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric]);
@@ -130,7 +136,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
-      const { blueprint: bp, symmetric: sym, hovered: h } = latest.current;
+      const { blueprint: bp, symmetric: sym, hovered, selected: sel } = latest.current;
+      // 操作の対象は、選択中のブロック(なければマウスの下のブロック)
+      const h = sel ?? hovered;
       const key = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -142,6 +150,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         if (h === null) return;
         e.preventDefault();
         commit(sym ? removeBlockSymmetric(bp, h) : removeBlock(bp, h));
+        setSelected(null);
+      } else if (e.key === 'Escape') {
+        setSelected(null);
       } else if (key === 'r' && h !== null && bp.blocks[h]?.type === 'joint') {
         const next = NEXT_AXIS[bp.blocks[h].axis!];
         commit(sym ? setJointAxisSymmetric(bp, h, next) : setJointAxis(bp, h, next));
@@ -159,6 +170,12 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   const joints = jointCount(blueprint);
   const com = centerOfMass(blueprint);
   const hoveredBlock = hovered !== null ? blueprint.blocks[hovered] : undefined;
+  const selectedBlock = selected !== null ? blueprint.blocks[selected] : undefined;
+  const removeSelected = () => {
+    if (selected === null) return;
+    commit(symmetric ? removeBlockSymmetric(blueprint, selected) : removeBlock(blueprint, selected));
+    setSelected(null);
+  };
   const isSymmetricBody = blockPositions(blueprint).every((p) => blockAt(blueprint, mirrorCell(p)) !== undefined);
 
   return (
@@ -199,6 +216,37 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           <input type="checkbox" checked={symmetric} onChange={(e) => setSymmetric(e.target.checked)} />
           左右対称モード
         </label>
+
+        <h2>選択中のブロック</h2>
+        {selectedBlock ? (
+          <div className="selected-block">
+            <div>
+              {selectedBlock.type === 'core' ? 'コア' : PALETTE.find((p) => p.type === selectedBlock.type)?.label}
+              {selectedBlock.type === 'joint' && `(軸 ${selectedBlock.axis!.toUpperCase()})`}
+            </div>
+            {selectedBlock.type === 'joint' && (
+              <div className="segmented">
+                {AXES.map((a) => (
+                  <button
+                    key={a.axis}
+                    className={selectedBlock.axis === a.axis ? 'selected' : ''}
+                    onClick={() => commit(symmetric ? setJointAxisSymmetric(blueprint, selected!, a.axis) : setJointAxis(blueprint, selected!, a.axis))}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="row">
+              <button className="danger" onClick={removeSelected} disabled={selectedBlock.type === 'core'} title="このブロックと、その先につながるブロックを削除します">
+                削除{symmetric ? '(左右とも)' : ''}
+              </button>
+              <button onClick={() => setSelected(null)}>選択を解除</button>
+            </div>
+          </div>
+        ) : (
+          <p className="muted small">ブロックを右クリックすると選択できます</p>
+        )}
 
         <h2>ステータス</h2>
         <dl className="stats">
@@ -242,8 +290,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         <ul className="help">
           <li>左クリック:面にブロックを置く</li>
           <li>右ドラッグ:回転 / ホイール:ズーム</li>
-          <li>Delete:マウスの下のブロックとその先を削除</li>
-          <li>R:マウスの下の関節の軸を切り替え</li>
+          <li>右クリック:ブロックを選択(Esc で解除)</li>
+          <li>Delete:選択中のブロックとその先を削除(選択がなければマウスの下のブロック)</li>
+          <li>R:選択中(またはマウスの下)の関節の軸を切り替え</li>
           <li>Ctrl+Z / Ctrl+Y:取り消し / やり直し</li>
           <li>1〜4:ブロックの種類を選ぶ</li>
         </ul>

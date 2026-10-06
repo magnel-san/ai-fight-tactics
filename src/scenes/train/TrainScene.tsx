@@ -157,7 +157,13 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
         // 1回だけの再生が終わったら、学習中の最新個体に戻る
         r = replay.current = latestTraining.current;
       }
-      if (!R || !r) return;
+      if (!R) return;
+      if (!r) {
+        // 表示できるものがない(運動脳がまだない など)ときは、前のメニューの映像を消す
+        viewer.showNothing();
+        setReplayLabel('');
+        return;
+      }
       const d = TASKS[r.task];
       const index = r.cursor % r.seeds.length;
       r.cursor++;
@@ -250,17 +256,17 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [points, task]);
 
-  const stop = async () => {
+  /** 学習を止める。計算中の世代の結果は待たずに捨てる(Worker もすぐ止める) */
+  const stop = () => {
     setRunning(false);
     const t = trainerRef.current;
     trainerRef.current = null;
-    await t?.stop();
     t?.dispose();
   };
 
-  const selectTask = async (t: TaskName) => {
+  const selectTask = (t: TaskName) => {
     if (t === task) return;
-    await stop();
+    stop();
     setTask(t);
     setError(null);
     resetReplay(t);
@@ -285,13 +291,18 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
     // この学習を始める前までの世代数(観戦の表示に使う)
     const baseGeneration = c.progress.generations[t] ?? 0;
     try {
-      const trainer = new Trainer(
+      // 止めた(または別のメニューに切り替えた)後に届いた報告は無視する
+      const isCurrent = () => trainerRef.current === trainer;
+      const trainer: Trainer = new Trainer(
         t,
         setupFor(c, t),
         currentGenome(c, t),
         randomSeed(),
-        (r) => onReport(t, baseGeneration, r),
+        (r) => {
+          if (isCurrent()) onReport(t, baseGeneration, r);
+        },
         (e) => {
+          if (!isCurrent()) return;
           setError(e.message);
           setRunning(false);
         },
