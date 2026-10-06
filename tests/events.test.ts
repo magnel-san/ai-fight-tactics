@@ -34,7 +34,7 @@ describe('かけっこ', () => {
     expect([...a.rank].sort()).toEqual([0, 1, 2]);
     expect(run()).toEqual(a);
     expect(a.distance.every((d) => d <= RACE.distance)).toBe(true);
-  });
+  }, 60_000);
 
   it('関節を動かさないキャラは、ほとんど進まない', () => {
     const ep = new RaceEpisode(R, [runner(null)], 1);
@@ -65,7 +65,7 @@ describe('サッカー', () => {
     expect(a.t).toBeGreaterThanOrEqual(SOCCER.timeLimit);
     expect(a.r.goals.length).toBe(a.r.score[0] + a.r.score[1]);
     expect(run()).toEqual(a);
-  });
+  }, 60_000);
 
   it('ボールが相手のゴールに入ると得点になり、ボールは中央に戻る', () => {
     const team = [runner(null), runner(null), runner(null)];

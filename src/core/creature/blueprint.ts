@@ -15,6 +15,8 @@ export interface BlockSpec {
   face?: Face;
   /** 関節の回転軸(関節のみ。コア基準の3軸から選ぶ) */
   axis?: Axis;
+  /** ピストンの伸びる向き(ピストンのみ。コア基準。省略時は付けた面の向き = 親から離れる向き) */
+  dir?: Face;
 }
 
 export interface Blueprint {
@@ -37,6 +39,16 @@ export const AXIS_DIR: Record<Axis, Vec3i> = {
   y: [0, 1, 0],
   z: [0, 0, 1],
 };
+
+/** 反対の面 */
+export function oppositeFace(face: Face): Face {
+  return ((face[0] === '+' ? '-' : '+') + face[1]) as Face;
+}
+
+/** ピストンの伸びる向き(指定がなければ付けた面の向き) */
+export function pistonDirection(b: BlockSpec): Face {
+  return b.dir ?? b.face!;
+}
 
 export function totalCost(bp: Blueprint): number {
   return bp.blocks.reduce((sum, b) => sum + BLOCKS[b.type].cost, 0);
@@ -133,6 +145,11 @@ export function validate(bp: Blueprint): string[] {
     }
     if (b.type === 'joint' && (!b.axis || !(b.axis in AXIS_DIR))) {
       errors.push(`関節ブロック${i}の回転軸が不正です:${b.axis}`);
+    }
+    if (b.dir !== undefined) {
+      if (b.type !== 'piston') errors.push(`ピストン以外のブロック${i}に伸びる向きが指定されています`);
+      else if (!(b.dir in FACE_DIR)) errors.push(`ピストン${i}の伸びる向きが不正です:${b.dir}`);
+      else if (b.face && b.dir === oppositeFace(b.face)) errors.push(`ピストン${i}は親のブロックに向かって伸ばせません`);
     }
     if (b.type !== 'joint' && b.axis !== undefined) {
       errors.push(`関節以外のブロック${i}に回転軸が指定されています`);

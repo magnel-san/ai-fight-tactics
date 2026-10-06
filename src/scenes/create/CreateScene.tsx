@@ -1,7 +1,7 @@
 // キャラクリエイト画面(仕様書セクション4)
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BLOCKS, CREATURE, type BlockType } from '../../core/config';
-import { blockPositions, centerOfMass, jointCount, totalCost, type Axis, type Blueprint } from '../../core/creature/blueprint';
+import { blockPositions, centerOfMass, jointCount, oppositeFace, pistonDirection, totalCost, type Axis, type Blueprint, type Face } from '../../core/creature/blueprint';
 import {
   addBlock,
   addBlockSymmetric,
@@ -13,6 +13,8 @@ import {
   removeBlockSymmetric,
   setJointAxis,
   setJointAxisSymmetric,
+  setPistonDir,
+  setPistonDirSymmetric,
   type EditResult,
 } from '../../core/creature/edit';
 import { QUADRUPED } from '../../core/creature/samples';
@@ -36,6 +38,19 @@ const AXES: { axis: Axis; label: string }[] = [
 
 const NEXT_AXIS: Record<Axis, Axis> = { x: 'y', y: 'z', z: 'x' };
 
+/** ピストンの伸びる向き(コアの正面 +z を向いたとき、+x が左) */
+const PISTON_DIRS: { dir: Face | 'face'; label: string; note: string }[] = [
+  { dir: 'face', label: '付けた面', note: '付けた面の向き(親から離れる向き)に伸びる' },
+  { dir: '+y', label: '上', note: '上に伸びる' },
+  { dir: '-y', label: '下', note: '下に伸びる(地面を押してジャンプ)' },
+  { dir: '+z', label: '前', note: '正面の向きに伸びる(押し出しに)' },
+  { dir: '-z', label: '後ろ', note: '後ろに伸びる' },
+  { dir: '+x', label: '左', note: '左に伸びる' },
+  { dir: '-x', label: '右', note: '右に伸びる' },
+];
+
+const dirLabel = (f: Face) => PISTON_DIRS.find((d) => d.dir === f)?.label ?? f;
+
 /** 取り消しの最大段数 */
 const HISTORY_LIMIT = 100;
 
@@ -53,6 +68,8 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   const viewRef = useRef<EditorView | null>(null);
   const [type, setType] = useState<Exclude<BlockType, 'core'>>('base');
   const [axis, setAxis] = useState<Axis>('x');
+  /** 置くピストンの伸びる向き('face' = 付けた面の向き) */
+  const [pistonDir, setPistonDirChoice] = useState<Face | 'face'>('face');
   const [symmetric, setSymmetric] = useState(true);
   const [hovered, setHovered] = useState<number | null>(null);
   /** 右クリックで選んだブロック */
@@ -63,8 +80,8 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   const [, forceRender] = useState(0);
 
   // イベントハンドラから常に最新の値を読むための参照
-  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected });
-  latest.current = { blueprint, type, axis, symmetric, hovered, selected };
+  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir });
+  latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir };
 
   const commit = useCallback(
     (result: EditResult) => {
@@ -103,8 +120,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => {
     const view = new EditorView(canvasRef.current!, {
       getPlacement(parent, face) {
-        const { blueprint: bp, type: t, axis: a, symmetric: sym } = latest.current;
-        const result = sym ? addBlockSymmetric(bp, parent, face, t, a) : addBlock(bp, parent, face, t, a);
+        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd } = latest.current;
+        const dir = pd === 'face' ? undefined : pd;
+        const result = sym ? addBlockSymmetric(bp, parent, face, t, a, dir) : addBlock(bp, parent, face, t, a, dir);
         const target = cellOnFace(bp, parent, face);
         if (!result.ok) return { cells: [target], ok: false };
         // 追加された分のブロックの位置を表示する
@@ -112,8 +130,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         return { cells: pos.slice(bp.blocks.length), ok: true };
       },
       onPlace(parent, face) {
-        const { blueprint: bp, type: t, axis: a, symmetric: sym } = latest.current;
-        commit(sym ? addBlockSymmetric(bp, parent, face, t, a) : addBlock(bp, parent, face, t, a));
+        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd } = latest.current;
+        const dir = pd === 'face' ? undefined : pd;
+        commit(sym ? addBlockSymmetric(bp, parent, face, t, a, dir) : addBlock(bp, parent, face, t, a, dir));
       },
       onHover: setHovered,
       onSelect: setSelected,
@@ -131,7 +150,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => setSelected(null), [blueprint.blocks.length]);
   useEffect(() => viewRef.current?.setSymmetric(symmetric), [symmetric]);
   useEffect(() => viewRef.current?.setGhostType(type), [type]);
-  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric]);
+  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric, pistonDir]);
 
   // キーボード操作
   useEffect(() => {
@@ -214,6 +233,20 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           </>
         )}
 
+        {type === 'piston' && (
+          <>
+            <h3>ピストンの伸びる向き</h3>
+            <div className="segmented wrap">
+              {PISTON_DIRS.map((d) => (
+                <button key={d.dir} className={pistonDir === d.dir ? 'selected' : ''} onClick={() => setPistonDirChoice(d.dir)} title={d.note}>
+                  {d.label}
+                </button>
+              ))}
+            </div>
+            <p className="muted small">付けた面の逆向き(親のブロックに向かう向き)には伸ばせません</p>
+          </>
+        )}
+
         <label className="toggle">
           <input type="checkbox" checked={symmetric} onChange={(e) => setSymmetric(e.target.checked)} />
           左右対称モード
@@ -225,7 +258,25 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
             <div>
               {selectedBlock.type === 'core' ? 'コア' : PALETTE.find((p) => p.type === selectedBlock.type)?.label}
               {selectedBlock.type === 'joint' && `(軸 ${selectedBlock.axis!.toUpperCase()})`}
+              {selectedBlock.type === 'piston' && `(${dirLabel(pistonDirection(selectedBlock))}に伸びる)`}
             </div>
+            {selectedBlock.type === 'piston' && (
+              <div className="segmented wrap">
+                {PISTON_DIRS.filter((d) => d.dir !== 'face').map((d) => {
+                  const dir = d.dir as Face;
+                  return (
+                    <button
+                      key={dir}
+                      className={pistonDirection(selectedBlock) === dir ? 'selected' : ''}
+                      disabled={dir === oppositeFace(selectedBlock.face!)}
+                      onClick={() => commit(symmetric ? setPistonDirSymmetric(blueprint, selected!, dir) : setPistonDir(blueprint, selected!, dir))}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {selectedBlock.type === 'joint' && (
               <div className="segmented">
                 {AXES.map((a) => (

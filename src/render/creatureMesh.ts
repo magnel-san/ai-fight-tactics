@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { BlockType } from '../core/config';
 import { CREATURE } from '../core/config';
-import type { Creature } from '../core/creature/assemble';
-import { FACE_DIR } from '../core/creature/blueprint';
+import { pistonStates, type Creature } from '../core/creature/assemble';
+import { FACE_DIR, pistonDirection } from '../core/creature/blueprint';
 
 export const BLOCK_COLORS: Record<BlockType, number> = {
   core: 0xf2c94c,
@@ -20,6 +20,8 @@ export interface CreatureMesh {
   root: THREE.Group;
   groups: THREE.Group[];
   teamMarker: THREE.Mesh | null;
+  /** ピストンの棒(creature.pistons と同じ並び)。伸びに合わせて長さを変える */
+  rods: { mesh: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3 }[];
   dispose(): void;
 }
 
@@ -61,22 +63,23 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
     return m;
   };
 
-  // ピストンの棒:ピストンブロックから親の方向へ、1マス分の長さ。縮んでいるときは親ブロックの中に隠れ、
-  // 伸びると隙間に見える
-  const rodGeometry = new THREE.BoxGeometry(size * 0.35, size * 0.35, CREATURE.pistonStroke);
+  // ピストンの棒:伸びた分だけ、ピストンブロックの後ろ(伸びる向きの反対側)に見える。縮んでいるときは長さ0
+  const rodGeometry = new THREE.BoxGeometry(size * 0.35, size * 0.35, 1);
   const rodMaterial = new THREE.MeshStandardMaterial({ color: 0x8a8f99, metalness: 0.6, roughness: 0.4, transparent: opts.ghost ?? false, opacity: opts.ghost ? 0.22 : 1 });
 
+  const rodByBlock = new Map<number, CreatureMesh['rods'][number]>();
   creature.blueprint.blocks.forEach((b, i) => {
     const mesh = new THREE.Mesh(geometry, material(b.type));
     mesh.position.set(...creature.localOffsets[i]);
     mesh.castShadow = !opts.ghost;
     groups[creature.segmentOf[i]].add(mesh);
     if (b.type === 'piston') {
-      const d = new THREE.Vector3(...FACE_DIR[b.face!]);
+      const d = new THREE.Vector3(...FACE_DIR[pistonDirection(b)]);
       const rod = new THREE.Mesh(rodGeometry, rodMaterial);
       rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
-      rod.position.copy(mesh.position).addScaledVector(d, -(CREATURE.blockSize / 2 + CREATURE.pistonStroke / 2));
+      rod.visible = false;
       groups[creature.segmentOf[i]].add(rod);
+      rodByBlock.set(b.id, { mesh: rod, base: mesh.position.clone(), dir: d });
     }
   });
 
@@ -97,6 +100,7 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
 
   return {
     teamMarker,
+    rods: creature.pistonBlockIds.map((id) => rodByBlock.get(id)!),
     root,
     groups,
     dispose() {
@@ -124,5 +128,14 @@ export function syncCreatureMesh(creature: Creature, mesh: CreatureMesh): void {
   if (mesh.teamMarker) {
     const t = creature.bodies[0].translation();
     mesh.teamMarker.position.set(t.x, t.y + 0.75, t.z);
+  }
+  if (mesh.rods.length > 0) {
+    pistonStates(creature).forEach((s, i) => {
+      const rod = mesh.rods[i];
+      const ext = Math.max(0, Math.min(CREATURE.pistonStroke, s.extension));
+      rod.mesh.visible = ext > 0.01;
+      rod.mesh.scale.set(1, 1, Math.max(0.001, ext));
+      rod.mesh.position.copy(rod.base).addScaledVector(rod.dir, -(CREATURE.blockSize / 2 + ext / 2));
+    });
   }
 }

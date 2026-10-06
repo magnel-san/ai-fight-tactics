@@ -6,7 +6,7 @@ import { BLOCKS, BRAIN, CREATURE } from '../config';
 import { atan2, cos, sin } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
-import { AXIS_DIR, blockPositions, FACE_DIR, segmentsOf, validate, type Blueprint } from './blueprint';
+import { AXIS_DIR, blockPositions, FACE_DIR, pistonDirection, segmentsOf, validate, type Blueprint } from './blueprint';
 
 export interface SpawnPose {
   /** コア中心のワールド座標 [m] */
@@ -104,8 +104,8 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
       z: (anchorGrid[2] - pos[b.id][2]) * size,
     };
     if (b.type === 'piston') {
-      // ピストン:親から離れる向き(付けた面の向き)に、0〜1マス分だけスライドする
-      const [dx, dy, dz] = FACE_DIR[b.face!];
+      // ピストン:伸びる向き(指定がなければ付けた面の向き = 親から離れる向き)に、0〜1マス分だけスライドする
+      const [dx, dy, dz] = FACE_DIR[pistonDirection(b)];
       const pdata = R.JointData.prismatic(anchor1, anchor2, { x: dx, y: dy, z: dz });
       const piston = world.createImpulseJoint(pdata, bodies[segmentOf[parent]], bodies[segmentOf[b.id]], true) as ImpulseJoint as PrismaticImpulseJoint;
       piston.setContactsEnabled(false);
@@ -171,7 +171,7 @@ export function actuatorStates(creature: Creature): { position: number; velocity
 export function pistonStates(creature: Creature): { extension: number; velocity: number }[] {
   return creature.pistons.map((piston, i) => {
     const b = creature.blueprint.blocks[creature.pistonBlockIds[i]];
-    const [dx, dy, dz] = FACE_DIR[b.face!];
+    const [dx, dy, dz] = FACE_DIR[pistonDirection(b)];
     const b1 = piston.body1();
     const b2 = piston.body2();
     const q1 = b1.rotation();

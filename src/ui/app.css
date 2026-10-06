@@ -745,3 +745,9 @@ button.small-button {
   font-size: 13px;
   line-height: 1.7;
 }
+.segmented.wrap {
+  flex-wrap: wrap;
+}
+.segmented.wrap button {
+  flex: 1 0 28%;
+}

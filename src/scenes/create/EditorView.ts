@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CREATURE, type BlockType } from '../../core/config';
-import { AXIS_DIR, blockPositions, centerOfMass, FACE_DIR, type Blueprint, type Face, type Vec3i } from '../../core/creature/blueprint';
+import { AXIS_DIR, blockPositions, centerOfMass, FACE_DIR, pistonDirection, type Blueprint, type Face, type Vec3i } from '../../core/creature/blueprint';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
 
 export interface Placement {
@@ -191,8 +191,8 @@ export class EditorView {
       this.blockMeshes.push(mesh);
       if (b.type === 'joint') mesh.add(this.axisIndicator(AXIS_DIR[b.axis!]));
       if (b.type === 'piston') {
-        // 伸びる向き(付けた面の向き)に、外側の面から少し突き出た棒を出す
-        const dir = FACE_DIR[b.face!];
+        // 伸びる向きに、ブロックから少し突き出た棒を出す
+        const dir = FACE_DIR[pistonDirection(b)];
         const rod = new THREE.Mesh(this.axisGeometry, this.pistonMaterial);
         rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir));
         rod.position.set(dir[0] * SIZE * 0.3, dir[1] * SIZE * 0.3, dir[2] * SIZE * 0.3);

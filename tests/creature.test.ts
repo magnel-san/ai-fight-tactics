@@ -13,6 +13,7 @@ import {
 } from '../src/core/creature/blueprint';
 import { QUADRUPED } from '../src/core/creature/samples';
 import { sin } from '../src/core/math/fmath';
+import { rotateInv } from '../src/core/math/quat';
 import { initRapier, type Rapier } from '../src/core/physics/rapier';
 import { StateHasher } from '../src/core/sim/hash';
 
@@ -230,6 +231,44 @@ describe('ピストン', () => {
       top = Math.max(top, c.bodies[0].translation().y);
     }
     expect(top - before).toBeGreaterThan(0.3);
+    world.free();
+  });
+});
+
+describe('ピストンの伸びる向き', () => {
+  let R: Rapier;
+  beforeAll(async () => {
+    R = await initRapier();
+  });
+
+  const sideways = (dir: BlockSpec['dir']): Blueprint => ({
+    blocks: [
+      { id: 0, type: 'core', parent: null },
+      { id: 1, type: 'piston', parent: 0, face: '-y', dir },
+    ],
+  });
+
+  it('付けた面の逆向き(親に向かう向き)は不正', () => {
+    expect(validate(sideways('+z'))).toEqual([]);
+    expect(validate(sideways('+y')).some((e) => e.includes('親のブロックに向かって'))).toBe(true);
+    expect(validate({ blocks: [{ id: 0, type: 'core', parent: null }, { id: 1, type: 'base', parent: 0, face: '+x', dir: '+z' }] }).length).toBeGreaterThan(0);
+  });
+
+  it('指定した向きに伸びる(下に付けて前に伸ばす)', () => {
+    const world = new R.World({ x: 0, y: 0, z: 0 });
+    world.timestep = PHYSICS.dt;
+    const c = spawnCreature(R, world, sideways('+z'), { position: { x: 0, y: 2, z: 0 }, yaw: 0 });
+    setJointTargets(c, [1]);
+    for (let i = 0; i < 60; i++) world.step();
+    // 無重力では伸ばした反動で体ごと回るので、コアから見た位置で確かめる
+    const p = c.bodies[1].translation();
+    const q = c.bodies[0].translation();
+    const [lx, ly, lz] = rotateInv(c.bodies[0].rotation(), p.x - q.x, p.y - q.y, p.z - q.z);
+    // ピストンのブロックは、コアの下(-y に1マス)から前(+z)へ 0.4m 動いている
+    expect(lx).toBeCloseTo(0, 2);
+    expect(ly).toBeCloseTo(-CREATURE.blockSize, 2);
+    expect(lz).toBeCloseTo(CREATURE.pistonStroke, 2);
+    expect(pistonStates(c)[0].extension).toBeCloseTo(CREATURE.pistonStroke, 2);
     world.free();
   });
 });

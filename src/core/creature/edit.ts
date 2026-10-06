@@ -1,7 +1,7 @@
 // 設計図の編集操作(キャラクリエイト画面から使う)。
 // どの操作も元の設計図は変更せず、新しい設計図を返す。結果は必ず validate() を通る。
 import type { BlockType } from '../config';
-import { blockPositions, FACE_DIR, validate, type Axis, type Blueprint, type Face, type Vec3i } from './blueprint';
+import { blockPositions, FACE_DIR, validate, type Axis, type Blueprint, type Face, type Vec3i, type BlockSpec } from './blueprint';
 
 export type EditResult =
   | { ok: true; blueprint: Blueprint; /** 操作は成功したが知らせたいこと */ notes: string[] }
@@ -36,15 +36,23 @@ function finish(bp: Blueprint, notes: string[] = []): EditResult {
   return errors.length > 0 ? { ok: false, errors } : { ok: true, blueprint: bp, notes };
 }
 
-/** ブロックを1つ追加する */
-export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis): EditResult {
+/**
+ * ブロックを1つ追加する。axis は関節の回転軸、pistonDir はピストンの伸びる向き
+ * (省略または付けた面と同じなら、付けた面の向き)
+ */
+export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis, pistonDir?: Face): EditResult {
   if (type === 'core') return { ok: false, errors: ['コアは追加できません'] };
   if (!bp.blocks[parent]) return { ok: false, errors: [`親ブロック${parent}がありません`] };
   if (blockAt(bp, cellOnFace(bp, parent, face)) !== undefined) {
     return { ok: false, errors: ['その位置にはすでにブロックがあります'] };
   }
   const id = bp.blocks.length;
-  const block = type === 'joint' ? { id, type, parent, face, axis: axis ?? 'x' } : { id, type, parent, face };
+  const block: BlockSpec =
+    type === 'joint'
+      ? { id, type, parent, face, axis: axis ?? 'x' }
+      : type === 'piston' && pistonDir && pistonDir !== face
+        ? { id, type, parent, face, dir: pistonDir }
+        : { id, type, parent, face };
   return finish({ blocks: [...bp.blocks, block] });
 }
 
@@ -52,8 +60,8 @@ export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockT
  * 左右対称モードでの追加。反対側の対応する位置にも同じブロックを置く。
  * 置く位置が対称面上にある場合や、反対側に親がない・埋まっている場合は、片側だけに置いて notes で知らせる。
  */
-export function addBlockSymmetric(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis): EditResult {
-  const first = addBlock(bp, parent, face, type, axis);
+export function addBlockSymmetric(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis, pistonDir?: Face): EditResult {
+  const first = addBlock(bp, parent, face, type, axis, pistonDir);
   if (!first.ok) return first;
 
   const target = cellOnFace(bp, parent, face);
@@ -67,7 +75,8 @@ export function addBlockSymmetric(bp: Blueprint, parent: number, face: Face, typ
   if (blockAt(first.blueprint, mirrored) !== undefined) {
     return { ...first, notes: ['反対側の位置が埋まっているため、片側だけに置きました'] };
   }
-  const second = addBlock(first.blueprint, mirrorParent, mirrorFace(face), type, axis);
+  // 反対側のピストンは、伸びる向きも左右を反転させる
+  const second = addBlock(first.blueprint, mirrorParent, mirrorFace(face), type, axis, pistonDir ? mirrorFace(pistonDir) : undefined);
   if (!second.ok) return { ok: false, errors: second.errors.map((e) => `左右対称に置けません:${e}`) };
   return second;
 }
@@ -116,6 +125,30 @@ export function setJointAxis(bp: Blueprint, id: number, axis: Axis): EditResult 
   const b = bp.blocks[id];
   if (!b || b.type !== 'joint') return { ok: false, errors: ['関節ブロックではありません'] };
   return finish({ blocks: bp.blocks.map((x) => (x.id === id ? { ...x, axis } : x)) });
+}
+
+/** ピストンの伸びる向きを変更する(付けた面と同じ向きなら、指定なしに戻す) */
+export function setPistonDir(bp: Blueprint, id: number, dir: Face): EditResult {
+  const b = bp.blocks[id];
+  if (!b || b.type !== 'piston') return { ok: false, errors: ['ピストンではありません'] };
+  return finish({
+    blocks: bp.blocks.map((x) => {
+      if (x.id !== id) return x;
+      const next: BlockSpec = { ...x };
+      if (dir === x.face) delete next.dir;
+      else next.dir = dir;
+      return next;
+    }),
+  });
+}
+
+/** 左右対称モードでのピストンの向きの変更。反対側の同じ位置にあるピストンは、左右を反転した向きにする */
+export function setPistonDirSymmetric(bp: Blueprint, id: number, dir: Face): EditResult {
+  const first = setPistonDir(bp, id, dir);
+  if (!first.ok) return first;
+  const mirror = blockAt(bp, mirrorCell(blockPositions(bp)[id]));
+  if (mirror === undefined || mirror === id || bp.blocks[mirror].type !== 'piston') return first;
+  return setPistonDir(first.blueprint, mirror, mirrorFace(dir));
 }
 
 /** 左右対称モードでの回転軸の変更。反対側の同じ位置にある関節も同じ軸にする */

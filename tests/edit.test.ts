@@ -119,3 +119,26 @@ describe('設計図の編集', () => {
     expect(bp.blocks[7].axis).toBe('x');
   });
 });
+
+describe('ピストンの向きの編集', () => {
+  it('左右対称に置くと、反対側のピストンは左右が反転した向きになる', async () => {
+    const { setPistonDirSymmetric } = await import('../src/core/creature/edit');
+    let bp = ok(addBlockSymmetric(emptyBlueprint(), 0, '+x', 'piston', undefined, '+z'));
+    expect(bp.blocks[1].dir).toBe('+z');
+    expect(bp.blocks[2].dir).toBe('+z');
+    bp = ok(addBlockSymmetric(emptyBlueprint(), 0, '-y', 'base'));
+    bp = ok(addBlockSymmetric(emptyBlueprint(), 0, '+z', 'base'));
+    const legs = ok(addBlockSymmetric(bp, 1, '+x', 'piston', undefined, '+x'));
+    // 付けた面と同じ向きは「指定なし」として保存する
+    expect(legs.blocks[2].dir).toBeUndefined();
+    const turned = ok(setPistonDirSymmetric(legs, 2, '-y'));
+    expect(turned.blocks[2].dir).toBe('-y');
+    expect(turned.blocks[3].dir).toBe('-y');
+    const sideways = ok(setPistonDirSymmetric(legs, 2, '+z'));
+    expect(sideways.blocks[3].dir).toBe('+z');
+  });
+
+  it('親に向かう向きには置けない', () => {
+    expect(addBlock(emptyBlueprint(), 0, '-y', 'piston', undefined, '+y').ok).toBe(false);
+  });
+});

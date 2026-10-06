@@ -174,6 +174,10 @@ function parseBlueprint(v: unknown): Blueprint {
       if (!FACES.has(o.face as string)) throw new Error(`ブロック${i}の面が不正です`);
       spec.face = o.face as BlockSpec['face'];
     }
+    if (o.dir !== undefined) {
+      if (!FACES.has(o.dir as string)) throw new Error(`ブロック${i}のピストンの向きが不正です`);
+      spec.dir = o.dir as BlockSpec['dir'];
+    }
     if (o.axis !== undefined) {
       if (!AXES.has(o.axis as string)) throw new Error(`ブロック${i}の軸が不正です`);
       spec.axis = o.axis as BlockSpec['axis'];
