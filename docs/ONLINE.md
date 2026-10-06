@@ -12,7 +12,7 @@
 
 1. [Supabase](https://supabase.com/) でプロジェクトを作る。
 2. **Authentication → Sign In / Providers** で **Anonymous Sign-Ins** を有効にする。
-3. **SQL Editor** で [`supabase/schema.sql`](../supabase/schema.sql) の内容を実行する。続けて、ランクマッチ用の [`supabase/schema-ranked.sql`](../supabase/schema-ranked.sql) の内容も実行する(何度実行しても大丈夫)。
+3. **SQL Editor** で [`supabase/schema.sql`](../supabase/schema.sql) の内容を実行する。2026-10-07 より前に実行した場合は、[`supabase/fix-format-version.sql`](../supabase/fix-format-version.sql) も実行する(新しい形式のキャラが `characters_data_check` のエラーで登録できない問題を直す)。続けて、ランクマッチ用の [`supabase/schema-ranked.sql`](../supabase/schema-ranked.sql) の内容も実行する(何度実行しても大丈夫)。
 4. **Project URL** と **Publishable key**(`sb_publishable_` で始まる。古いプロジェクトでは **anon public** キー)を、`.env.local` に書く。`.env.example` は書き換えずにコピーして使う(`.env.example` は GitHub に上がるため)。**Secret key / service_role キーは使わない**。
    ```
    VITE_SUPABASE_URL=https://xxxxxxxx.supabase.co

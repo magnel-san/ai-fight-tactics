@@ -19,6 +19,17 @@ export function supabaseClient(): SupabaseClient {
   return client;
 }
 
+/** サーバーのエラーを、わかりやすい文に直す */
+export function serverError(error: { code?: string; message: string }): Error {
+  // check 制約の違反:データが大きすぎる・ブロックが多すぎる、またはサーバーの設定(SQL)が古い
+  if (error.code === '23514') {
+    return new Error(
+      'サーバーの条件に合わないため登録できませんでした。サーバーの設定が古い場合は、Supabase の SQL Editor で supabase/fix-format-version.sql を実行してください',
+    );
+  }
+  return new Error(error.message);
+}
+
 /** 匿名ログイン(ブラウザごとに1人のユーザーになる) */
 export async function ensureSession(): Promise<string> {
   const sb = supabaseClient();
@@ -62,11 +73,11 @@ export async function registerCharacter(c: Character, onlineId?: string): Promis
   const sb = supabaseClient();
   if (onlineId) {
     const { error } = await sb.from('characters').update({ name: c.name, data: json }).eq('id', onlineId);
-    if (error) throw new Error(error.message);
+    if (error) throw serverError(error);
     return onlineId;
   }
   const { data, error } = await sb.from('characters').insert({ name: c.name, data: json }).select('id').single();
-  if (error) throw new Error(error.message);
+  if (error) throw serverError(error);
   return (data as { id: string }).id;
 }
 

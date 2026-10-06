@@ -40,7 +40,7 @@ create table if not exists public.ranked_entries (
   data jsonb not null check (
     pg_column_size(data) < 32768
     and data ? 'version' and data ? 'blueprint' and data ? 'brains'
-    and (data ->> 'version')::int between 1 and 3
+    and (data ->> 'version')::int between 1 and 99
     and jsonb_typeof(data -> 'blueprint' -> 'blocks') = 'array'
     and jsonb_array_length(data -> 'blueprint' -> 'blocks') between 1 and 24
     and data -> 'brains' -> 'motor' is not null

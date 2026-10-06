@@ -24,7 +24,7 @@ import {
 import type { FighterData } from '../core/training/tasks';
 import type { RankedRequest, RankedResponse } from '../workers/ranked.worker';
 import { getSetting, setSetting } from '../storage/db';
-import { ensureSession, onlineConfigured, supabaseClient } from './client';
+import { ensureSession, onlineConfigured, serverError, supabaseClient } from './client';
 
 export { onlineConfigured };
 
@@ -39,7 +39,7 @@ function check<T>(res: { data: T | null; error: { code?: string; message: string
   if (res.error) {
     const code = res.error.code ?? '';
     if (code === '42P01' || code === 'PGRST205' || /does not exist|schema cache/.test(res.error.message)) throw new RankedNotReadyError();
-    throw new Error(res.error.message);
+    throw serverError(res.error);
   }
   return res.data as T;
 }
