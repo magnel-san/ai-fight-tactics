@@ -7,6 +7,7 @@ import type { FighterData } from '../core/training/tasks';
 import { pushOpponents } from '../data/bots';
 import { BattleScene, type BattleRecord, type OpponentEntry } from '../scenes/battle/BattleScene';
 import { CreateScene } from '../scenes/create/CreateScene';
+import { EventsScene } from '../scenes/events/EventsScene';
 import { LibraryScene } from '../scenes/library/LibraryScene';
 import { OnlineScene } from '../scenes/online/OnlineScene';
 import { TrainScene, type TrainReplay } from '../scenes/train/TrainScene';
@@ -15,12 +16,13 @@ import type { Opponent } from '../training/Trainer';
 import { DeterminismCheck } from './DeterminismCheck';
 import { useCharacterStore } from './useCharacterStore';
 
-type Tab = 'create' | 'train' | 'battle' | 'library' | 'online';
+type Tab = 'create' | 'train' | 'battle' | 'events' | 'library' | 'online';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'create', label: 'キャラクリエイト' },
   { id: 'train', label: 'トレーニング' },
   { id: 'battle', label: 'バトル' },
+  { id: 'events', label: '種目' },
   { id: 'library', label: 'マイキャラ' },
   { id: 'online', label: 'オンライン' },
 ];
@@ -174,6 +176,9 @@ export function App() {
                 replay={battleReplay}
                 onAddToPool={addOpponentToPool}
               />
+            </div>
+            <div className="tab-page" hidden={tab !== 'events'}>
+              <EventsScene character={character} entries={battleOpponents} active={tab === 'events'} />
             </div>
             <div className="tab-page scroll" hidden={tab !== 'library'}>
               <LibraryScene

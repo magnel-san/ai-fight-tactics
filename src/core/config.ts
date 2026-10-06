@@ -226,6 +226,41 @@ export const SENSOR = {
   penaltyPerSec: 2,
 } as const;
 
+/** 種目「かけっこ」:まっすぐ走って、ゴールまでのタイム(届かなければ進んだ距離)を競う */
+export const RACE = {
+  /** ゴールまでの距離 [m] */
+  distance: 20,
+  timeLimit: 60,
+  /** 一度に走る人数と、レーンの間隔 [m] */
+  maxRunners: 4,
+  laneWidth: 3,
+} as const;
+
+/** 種目「サッカー」(3対3) */
+export const SOCCER = {
+  /** フィールドの半分の幅(x)と半分の長さ(z) [m] */
+  halfWidth: 5,
+  halfLength: 8,
+  /** ゴールの幅 [m] */
+  goalWidth: 3,
+  /** 壁の高さと厚み [m] */
+  wallHeight: 0.6,
+  wallThickness: 0.3,
+  ballRadius: 0.35,
+  ballMass: 1.0,
+  ballRestitution: 0.5,
+  ballFriction: 0.6,
+  /** 転がりを少しずつ弱める */
+  ballDamping: 0.3,
+  timeLimit: 90,
+  teamSize: 3,
+  /** ボールの後ろに回り込む距離 [m]。この距離まで近づいたらゴールへ押し込む */
+  approachOffset: 0.9,
+  pushStartDist: 0.7,
+  /** 守る役がいる位置(自陣ゴールからボールまでの割合) */
+  defendRatio: 0.35,
+} as const;
+
 /** マイルストーンの判定 */
 export const MILESTONE = {
   /** 「初めて立った」:コアの上方向の鉛直成分がこれ以上で、コアの高さがこれ以上の状態を、この秒数保つ */

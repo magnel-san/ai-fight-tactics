@@ -25,6 +25,9 @@ export class EpisodeViewer {
   private main: Shown | null = null;
   private ghosts: Shown[] = [];
   private stageMesh: StageMesh | null = null;
+  /** 種目の表示物(ボール・壁など) */
+  private propMeshes: THREE.Mesh[] = [];
+  private sphereMeshes: { mesh: THREE.Mesh; body: { translation(): { x: number; y: number; z: number }; rotation(): { x: number; y: number; z: number; w: number } } }[] = [];
   private frame = 0;
   private last = 0;
   private acc = 0;
@@ -100,10 +103,10 @@ export class EpisodeViewer {
   /** 表示するエピソードを差し替える(古いエピソードは解放する) */
   setEpisodes(main: Episode, ghosts: Episode[] = []): void {
     this.clear();
-    const twoTeams = main.fighters.length === 2;
+    const teams = main.teams ?? (main.fighters.length === 2 ? [0, 1] : null);
     this.main = {
       episode: main,
-      meshes: main.fighters.map((f, i) => buildCreatureMesh(f.creature, twoTeams ? { team: i } : {})),
+      meshes: main.fighters.map((f, i) => buildCreatureMesh(f.creature, teams ? { team: teams[i] } : {})),
     };
     this.ghosts = ghosts.map((episode) => ({
       episode,
@@ -111,7 +114,26 @@ export class EpisodeViewer {
     }));
     for (const s of [this.main, ...this.ghosts]) for (const m of s.meshes) this.scene.add(m.root);
 
-    this.floor.visible = !main.stage;
+    this.floor.visible = !main.stage && !main.props;
+    if (main.props) {
+      for (const b of main.props.boxes) {
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(b.hx * 2, b.hy * 2, b.hz * 2),
+          new THREE.MeshStandardMaterial({ color: b.color, transparent: b.opacity !== undefined, opacity: b.opacity ?? 1 }),
+        );
+        mesh.position.set(b.x, b.y, b.z);
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        this.propMeshes.push(mesh);
+      }
+      for (const sp of main.props.spheres) {
+        const mesh = new THREE.Mesh(new THREE.SphereGeometry(sp.radius, 24, 16), new THREE.MeshStandardMaterial({ color: sp.color, roughness: 0.5 }));
+        mesh.castShadow = true;
+        this.scene.add(mesh);
+        this.propMeshes.push(mesh);
+        this.sphereMeshes.push({ mesh, body: sp.body });
+      }
+    }
     if (main.stage) {
       this.stageMesh = new StageMesh(main.stage);
       this.scene.add(this.stageMesh.root);
@@ -125,7 +147,13 @@ export class EpisodeViewer {
 
     // カメラの注視点:ステージなら中心、平地ならキャラと目標の中間
     const p = main.fighters[0].position();
-    if (main.stage) this.focus.set(0, 0, 0);
+    if (main.view) {
+      this.focus.set(main.view.x, 0, main.view.z);
+      // 種目では全体が見える距離までカメラを引く
+      const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+      this.camera.position.copy(this.focus).addScaledVector(dir, main.view.distance);
+      this.controls.target.copy(this.focus);
+    } else if (main.stage) this.focus.set(0, 0, 0);
     else if (main.target) this.focus.set((p.x + main.target.x) / 2, 0.3, (p.z + main.target.z) / 2);
     else this.focus.set(p.x, 0.3, p.z);
     this.moveFocus(this.focus, true);
@@ -175,6 +203,13 @@ export class EpisodeViewer {
       this.stageMesh.dispose();
       this.stageMesh = null;
     }
+    for (const m of this.propMeshes) {
+      this.scene.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    this.propMeshes = [];
+    this.sphereMeshes = [];
   }
 
   private sync(): void {
@@ -183,6 +218,12 @@ export class EpisodeViewer {
       s.meshes.forEach((m, i) => syncCreatureMesh(s.episode.fighters[i].creature, m));
     }
     this.stageMesh?.update();
+    for (const s of this.sphereMeshes) {
+      const t = s.body.translation();
+      const r = s.body.rotation();
+      s.mesh.position.set(t.x, t.y, t.z);
+      s.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    }
     const t = this.main?.episode.target;
     if (t) this.targetMarker.position.set(t.x, 0, t.z);
   }

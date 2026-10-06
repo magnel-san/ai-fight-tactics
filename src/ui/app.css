@@ -739,3 +739,9 @@ button.small-button {
   padding: 2px 8px;
   font-size: 12px;
 }
+.ranking {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.7;
+}

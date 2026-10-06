@@ -1,6 +1,6 @@
 // エピソード(トレーニング1回分・試合1回分)の共通部分。
 // 物理を固定ステップで進め、3ステップに1回 think() を呼ぶ。観戦表示は fighters・target・stage を見て描画する。
-import type { World } from '@dimforge/rapier3d-compat';
+import type { RigidBody, World } from '@dimforge/rapier3d-compat';
 import { MILESTONE, PHYSICS, SENSOR } from '../config';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
@@ -28,8 +28,22 @@ export interface EpisodeOutcome {
   flags: EpisodeFlags;
 }
 
+/** キャラ以外の表示物(種目のボールや壁など) */
+export interface EpisodeProps {
+  /** 動く球(ボール) */
+  spheres: { body: RigidBody; radius: number; color: number }[];
+  /** 動かない箱(壁・ゴール)。中心と半分の大きさ [m] */
+  boxes: { x: number; y: number; z: number; hx: number; hy: number; hz: number; color: number; opacity?: number }[];
+}
+
 export interface Episode {
   readonly world: World;
+  /** キャラ以外の表示物(省略可) */
+  readonly props?: EpisodeProps;
+  /** キャラごとのチーム(0 / 1)。省略時は2体ならそれぞれ別チーム */
+  readonly teams?: readonly number[];
+  /** カメラの注視点と距離の目安(省略時は自動) */
+  readonly view?: { x: number; z: number; distance: number };
   readonly fighters: readonly Fighter[];
   /** 目標地点(移動・追跡の課題のみ) */
   readonly target: { x: number; z: number } | null;
