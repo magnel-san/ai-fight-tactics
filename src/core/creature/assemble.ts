@@ -1,11 +1,12 @@
 // 設計図からRapierの剛体・コライダー・関節を組み立てる(仕様書セクション4・5)。
 // 登録順は必ずブロックID順:剛体(セグメントの根のID順)→ コライダー(ブロックID順)→ 関節(関節ブロックのID順)。
-import type { ImpulseJoint, RevoluteImpulseJoint, RigidBody } from '@dimforge/rapier3d-compat';
-import { BLOCKS, CREATURE } from '../config';
+// 運動脳の入出力の並びは「関節(ID順)→ ピストン(ID順)」。
+import type { ImpulseJoint, PrismaticImpulseJoint, RevoluteImpulseJoint, RigidBody } from '@dimforge/rapier3d-compat';
+import { BLOCKS, BRAIN, CREATURE } from '../config';
 import { atan2, cos, sin } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
-import { AXIS_DIR, blockPositions, segmentsOf, validate, type Blueprint } from './blueprint';
+import { AXIS_DIR, blockPositions, FACE_DIR, segmentsOf, validate, type Blueprint } from './blueprint';
 
 export interface SpawnPose {
   /** コア中心のワールド座標 [m] */
@@ -22,6 +23,10 @@ export interface Creature {
   joints: RevoluteImpulseJoint[];
   /** joints[i] に対応する関節ブロックのID */
   jointBlockIds: number[];
+  /** ピストン(ピストンブロックのID順) */
+  pistons: PrismaticImpulseJoint[];
+  /** pistons[i] に対応するピストンブロックのID */
+  pistonBlockIds: number[];
   /** 各ブロックが属する剛体の番号(描画で使う) */
   segmentOf: number[];
   /** 各ブロックの、属する剛体のローカル座標での中心 [m](描画で使う) */
@@ -79,8 +84,10 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
   // 関節:親ブロックと関節ブロックの接する面の中心をヒンジの支点にする
   const joints: RevoluteImpulseJoint[] = [];
   const jointBlockIds: number[] = [];
+  const pistons: PrismaticImpulseJoint[] = [];
+  const pistonBlockIds: number[] = [];
   for (const b of bp.blocks) {
-    if (b.type !== 'joint') continue;
+    if (b.type !== 'joint' && b.type !== 'piston') continue;
     const parent = b.parent!;
     const parentRoot = segments[segmentOf[parent]].root;
     const anchorGrid = [0, 1, 2].map((k) => (pos[parent][k] + pos[b.id][k]) / 2);
@@ -94,6 +101,20 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
       y: (anchorGrid[1] - pos[b.id][1]) * size,
       z: (anchorGrid[2] - pos[b.id][2]) * size,
     };
+    if (b.type === 'piston') {
+      // ピストン:親から離れる向き(付けた面の向き)に、0〜1マス分だけスライドする
+      const [dx, dy, dz] = FACE_DIR[b.face!];
+      const pdata = R.JointData.prismatic(anchor1, anchor2, { x: dx, y: dy, z: dz });
+      const piston = world.createImpulseJoint(pdata, bodies[segmentOf[parent]], bodies[segmentOf[b.id]], true) as ImpulseJoint as PrismaticImpulseJoint;
+      piston.setContactsEnabled(false);
+      piston.setLimits(0, CREATURE.pistonStroke);
+      piston.configureMotorModel(R.MotorModel.ForceBased);
+      piston.setMotorMaxForce(CREATURE.pistonMaxForce);
+      piston.configureMotorPosition(0, CREATURE.pistonStiffness, CREATURE.pistonDamping);
+      pistons.push(piston);
+      pistonBlockIds.push(b.id);
+      continue;
+    }
     const [ax, ay, az] = AXIS_DIR[b.axis!];
     const data = R.JointData.revolute(anchor1, anchor2, { x: ax, y: ay, z: az });
     const joint = world.createImpulseJoint(data, bodies[segmentOf[parent]], bodies[segmentOf[b.id]], true) as ImpulseJoint as RevoluteImpulseJoint;
@@ -107,14 +128,67 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
     jointBlockIds.push(b.id);
   }
 
-  return { blueprint: bp, bodies, joints, jointBlockIds, segmentOf, localOffsets };
+  return { blueprint: bp, bodies, joints, jointBlockIds, pistons, pistonBlockIds, segmentOf, localOffsets };
 }
 
-/** 各関節の目標角度を設定する。targets は -1〜1 で、可動範囲 ±jointLimit に対応する */
+/** 動かせるブロックの数(関節 + ピストン) */
+export function actuatorsOf(creature: Creature): number {
+  return creature.joints.length + creature.pistons.length;
+}
+
+/**
+ * 関節とピストンの目標を設定する。targets の並びは「関節 → ピストン」で、値は -1〜1。
+ * 関節は可動範囲 ±jointLimit の角度に対応し、ピストンは 0 以上なら伸ばし、0 未満なら縮める
+ */
 export function setJointTargets(creature: Creature, targets: ArrayLike<number>): void {
   creature.joints.forEach((joint, i) => {
     const t = Math.max(-1, Math.min(1, targets[i]));
     joint.configureMotorPosition(t * CREATURE.jointLimit, CREATURE.jointStiffness, CREATURE.jointDamping);
+  });
+  const n = creature.joints.length;
+  creature.pistons.forEach((piston, i) => {
+    const extend = targets[n + i] >= 0;
+    piston.configureMotorPosition(extend ? CREATURE.pistonStroke : 0, CREATURE.pistonStiffness, CREATURE.pistonDamping);
+  });
+}
+
+/**
+ * 関節とピストンの状態を -1〜1 程度にそろえた値(運動脳の入力)。並びは「関節 → ピストン」。
+ * 関節は角度/可動範囲と角速度、ピストンは伸び(縮み -1 〜 伸び 1)と伸びる速さ
+ */
+export function actuatorStates(creature: Creature): { position: number; velocity: number }[] {
+  const joints = jointStates(creature).map((s) => ({ position: s.angle / CREATURE.jointLimit, velocity: s.velocity / BRAIN.jointVelScale }));
+  const pistons = pistonStates(creature).map((s) => ({
+    position: (2 * s.extension) / CREATURE.pistonStroke - 1,
+    velocity: s.velocity / BRAIN.pistonVelScale,
+  }));
+  return [...joints, ...pistons];
+}
+
+/** ピストンの伸び [m] と伸びる速さ [m/s](親の剛体から見た、付けた面の向きの成分) */
+export function pistonStates(creature: Creature): { extension: number; velocity: number }[] {
+  return creature.pistons.map((piston, i) => {
+    const b = creature.blueprint.blocks[creature.pistonBlockIds[i]];
+    const [dx, dy, dz] = FACE_DIR[b.face!];
+    const b1 = piston.body1();
+    const b2 = piston.body2();
+    const q1 = b1.rotation();
+    const l1 = piston.anchor1();
+    const l2 = piston.anchor2();
+    const a1 = rotate(q1, l1.x, l1.y, l1.z);
+    const a2 = rotate(b2.rotation(), l2.x, l2.y, l2.z);
+    const p1 = b1.translation();
+    const p2 = b2.translation();
+    const axis = rotate(q1, dx, dy, dz);
+    const ex = p2.x + a2[0] - (p1.x + a1[0]);
+    const ey = p2.y + a2[1] - (p1.y + a1[1]);
+    const ez = p2.z + a2[2] - (p1.z + a1[2]);
+    const v1 = b1.linvel();
+    const v2 = b2.linvel();
+    return {
+      extension: ex * axis[0] + ey * axis[1] + ez * axis[2],
+      velocity: (v2.x - v1.x) * axis[0] + (v2.y - v1.y) * axis[1] + (v2.z - v1.z) * axis[2],
+    };
   });
 }
 

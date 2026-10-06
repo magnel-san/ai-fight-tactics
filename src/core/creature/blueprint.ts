@@ -46,6 +46,20 @@ export function jointCount(bp: Blueprint): number {
   return bp.blocks.filter((b) => b.type === 'joint').length;
 }
 
+export function pistonCount(bp: Blueprint): number {
+  return bp.blocks.filter((b) => b.type === 'piston').length;
+}
+
+/** 動かせるブロック(関節とピストン)の数。運動脳の入出力の大きさを決める */
+export function actuatorCount(bp: Blueprint): number {
+  return jointCount(bp) + pistonCount(bp);
+}
+
+/** 動かせるブロックか(体をここで別の剛体に分ける) */
+export function isActuator(type: BlockSpec['type']): boolean {
+  return type === 'joint' || type === 'piston';
+}
+
 /**
  * 各ブロックの格子座標を求める(配列の添字 = ブロックID)。
  * validate() を通った設計図を前提とする。
@@ -94,8 +108,8 @@ export function validate(bp: Blueprint): string[] {
   const cost = totalCost(bp);
   if (cost > CREATURE.maxCost) errors.push(`コストが上限(${CREATURE.maxCost})を超えています:${cost}`);
 
-  const joints = jointCount(bp);
-  if (joints > CREATURE.maxJoints) errors.push(`関節数が上限(${CREATURE.maxJoints})を超えています:${joints}`);
+  const joints = actuatorCount(bp);
+  if (joints > CREATURE.maxJoints) errors.push(`関節数(関節とピストンの合計)が上限(${CREATURE.maxJoints})を超えています:${joints}`);
 
   const cores = blocks.filter((b) => b.type === 'core').length;
   if (cores !== 1) errors.push(`コアはちょうど1個必要です:${cores}個`);
@@ -140,8 +154,8 @@ export function validate(bp: Blueprint): string[] {
 
 /**
  * 剛体(セグメント)への分割。
- * 関節ブロックを挟まずにつながったブロックは1つの剛体にまとめる。
- * 関節ブロック自身は子側の剛体の根になり、親側の剛体とはヒンジでつながる。
+ * 関節・ピストンのブロックを挟まずにつながったブロックは1つの剛体にまとめる。
+ * 関節・ピストンのブロック自身は子側の剛体の根になり、親側の剛体とはヒンジ(関節)かスライド(ピストン)でつながる。
  */
 export interface Segment {
   /** この剛体の根のブロックID(コアまたは関節ブロック) */
@@ -154,7 +168,7 @@ export function segmentsOf(bp: Blueprint): { segments: Segment[]; segmentOf: num
   const segments: Segment[] = [];
   const segmentOf: number[] = [];
   for (const b of bp.blocks) {
-    if (b.parent === null || b.type === 'joint') {
+    if (b.parent === null || isActuator(b.type)) {
       segmentOf.push(segments.length);
       segments.push({ root: b.id, blocks: [b.id] });
     } else {

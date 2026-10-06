@@ -2,20 +2,21 @@
 // 形式を変えたときは version を上げ、migrate() に移行処理を書く。
 // 受け取ったデータは信用せず、parseCharacter() で形と値を検証してから使う(不正対策)。
 import { decisionGenomeLength, DECISION_SHAPE, EYE_HEXES } from './brain/decision';
-import { remapInputs } from './brain/mlp';
+import { appendOutputs, mlpParamCount, remapInputs } from './brain/mlp';
 import { hexesWithin } from './stage/hex';
 import { fromF16Bits, toF16Bits } from './brain/f16';
 import { motorGenomeLength, motorShape, rhythmPeriod } from './brain/motor';
 import type { Character, Progress } from './character';
-import { jointCount, validate, type Blueprint, type BlockSpec } from './creature/blueprint';
+import { actuatorCount, validate, type Blueprint, type BlockSpec } from './creature/blueprint';
 import { TASK_ORDER, type TaskName } from './training/tasks';
 
 /**
  * 形式のバージョン
  *   1:最初の形式(判断脳の入力35、目は2周19マス)
  *   2:判断脳の目を4周61マスに広げた(入力77)
+ *   3:ピストンブロックを追加。運動脳の入力にジャンプ指令、判断脳の出力にジャンプ指令を追加
  */
-export const FORMAT_VERSION = 2;
+export const FORMAT_VERSION = 3;
 
 interface BrainJson {
   inputs: number;
@@ -92,8 +93,7 @@ export function decodeWeights(s: string): Float64Array {
 }
 
 export function characterToJson(c: Character): CharacterJson {
-  const joints = jointCount(c.blueprint);
-  const ms = motorShape(joints);
+  const ms = motorShape(actuatorCount(c.blueprint));
   return {
     version: FORMAT_VERSION,
     name: c.name,
@@ -112,8 +112,35 @@ export function characterToJson(c: Character): CharacterJson {
 function migrate(input: { version?: unknown }): CharacterJson {
   let json = input as CharacterJson;
   if (json.version === 1) json = migrate1to2(json);
+  if (json.version === 2) json = migrate2to3(json);
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
+}
+
+/**
+ * 2 → 3:運動脳の入力の最後にジャンプ指令を、判断脳の出力の最後にジャンプ指令を足す。
+ * 足した重みは0なので、ジャンプ指令は使われず、動きは変わらない
+ */
+function migrate2to3(json: CharacterJson): CharacterJson {
+  const brains = { ...json.brains };
+  const m = brains.motor;
+  if (m && typeof m.weights === 'string') {
+    const genome = decodeWeights(m.weights);
+    const from = { inputs: m.inputs, hidden: m.hidden, outputs: m.outputs };
+    const to = { inputs: m.inputs + 1, hidden: m.hidden, outputs: m.outputs };
+    if (genome.length !== mlpParamCount(from) + 1) throw new Error('運動脳の重みの数が不正です');
+    const mlp = remapInputs(genome.subarray(0, genome.length - 1), from, to, Array.from({ length: from.inputs }, (_, i) => i));
+    const next = new Float64Array(mlp.length + 1);
+    next.set(mlp);
+    next[mlp.length] = genome[genome.length - 1];
+    brains.motor = { ...m, inputs: to.inputs, weights: encodeWeights(next) };
+  }
+  const d = brains.decision;
+  if (d && typeof d.weights === 'string') {
+    const from = { inputs: d.inputs, hidden: d.hidden, outputs: 3 };
+    brains.decision = { ...DECISION_SHAPE, weights: encodeWeights(appendOutputs(decodeWeights(d.weights), from, DECISION_SHAPE)) };
+  }
+  return { ...json, version: 3, brains };
 }
 
 /** 1 → 2:判断脳の目を2周19マスから4周61マスへ。古い目の重みは同じマスへ移し、増えたマスの重みは0にする */
@@ -121,17 +148,18 @@ function migrate1to2(json: CharacterJson): CharacterJson {
   const d = json.brains?.decision;
   if (!d || typeof d.weights !== 'string') return { ...json, version: 2 };
   const oldEye = hexesWithin(2);
-  const oldShape = { inputs: 35, hidden: DECISION_SHAPE.hidden, outputs: DECISION_SHAPE.outputs };
+  const oldShape = { inputs: 35, hidden: DECISION_SHAPE.hidden, outputs: 3 };
   const inputMap = Array.from({ length: oldShape.inputs }, (_, i) =>
     i < oldEye.length
       ? EYE_HEXES.findIndex((h) => h.q === oldEye[i].q && h.r === oldEye[i].r)
       : EYE_HEXES.length + (i - oldEye.length),
   );
-  const weights = remapInputs(decodeWeights(d.weights), oldShape, DECISION_SHAPE, inputMap);
-  return { ...json, version: 2, brains: { ...json.brains, decision: { ...DECISION_SHAPE, weights: encodeWeights(weights) } } };
+  const weights = remapInputs(decodeWeights(d.weights), oldShape, { ...oldShape, inputs: 77 }, inputMap);
+  const decision = { inputs: 77, hidden: DECISION_SHAPE.hidden, outputs: 3, weights: encodeWeights(weights) };
+  return { ...json, version: 2, brains: { ...json.brains, decision } };
 }
 
-const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'grip']);
+const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'grip', 'piston']);
 const FACES = new Set(['+x', '-x', '+y', '-y', '+z', '-z']);
 const AXES = new Set(['x', 'y', 'z']);
 
@@ -174,7 +202,7 @@ export function parseCharacter(input: string | unknown): Character {
   const json = migrate(raw as { version?: unknown });
   const blueprint = parseBlueprint(json.blueprint);
   const name = typeof json.name === 'string' && json.name.trim() ? json.name.slice(0, 40) : '名無し';
-  const motor = parseWeights(json.brains?.motor, motorGenomeLength(jointCount(blueprint)), '運動脳');
+  const motor = parseWeights(json.brains?.motor, motorGenomeLength(actuatorCount(blueprint)), '運動脳');
   const decision = parseWeights(json.brains?.decision, decisionGenomeLength(), '判断脳');
   const p = (json.progress ?? {}) as Partial<Progress>;
   const passed = Array.isArray(p.passed) ? p.passed.filter((t): t is TaskName => TASK_ORDER.includes(t as TaskName)) : [];

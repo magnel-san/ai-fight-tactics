@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { BLOCKS, CREATURE, PHYSICS } from '../src/core/config';
-import { jointStates, setJointTargets, spawnCreature } from '../src/core/creature/assemble';
+import { jointStates, pistonStates, setJointTargets, spawnCreature } from '../src/core/creature/assemble';
 import {
+  actuatorCount,
   centerOfMass,
   jointCount,
   segmentsOf,
@@ -173,5 +174,62 @@ describe('剛体への組み立て', () => {
     const first = run();
     expect(run()).toBe(first);
     expect(first).toMatchSnapshot();
+  });
+});
+
+describe('ピストン', () => {
+  let R: Rapier;
+  beforeAll(async () => {
+    R = await initRapier();
+  });
+
+  const withPiston: Blueprint = {
+    blocks: [
+      { id: 0, type: 'core', parent: null },
+      { id: 1, type: 'joint', parent: 0, face: '+x', axis: 'z' },
+      { id: 2, type: 'piston', parent: 0, face: '-y' },
+      { id: 3, type: 'grip', parent: 2, face: '-y' },
+    ],
+  };
+
+  it('関節とピストンの合計で上限を数え、運動脳の出力は「関節 → ピストン」', () => {
+    expect(validate(withPiston)).toEqual([]);
+    expect(actuatorCount(withPiston)).toBe(2);
+    const many = chain(Array(CREATURE.maxJoints).fill('joint'));
+    many.blocks.push({ id: many.blocks.length, type: 'piston', parent: 0, face: '-z' });
+    expect(validate(many).some((e) => e.includes('関節数'))).toBe(true);
+  });
+
+  it('伸ばす指令で1マス分伸び、縮める指令で戻る', () => {
+    const world = new R.World({ x: 0, y: 0, z: 0 });
+    world.timestep = PHYSICS.dt;
+    const c = spawnCreature(R, world, withPiston, { position: { x: 0, y: 2, z: 0 }, yaw: 0.4 });
+    expect(c.pistons.length).toBe(1);
+    expect(c.pistonBlockIds).toEqual([2]);
+    expect(pistonStates(c)[0].extension).toBeCloseTo(0, 3);
+    setJointTargets(c, [0, 1]);
+    for (let i = 0; i < 60; i++) world.step();
+    expect(pistonStates(c)[0].extension).toBeCloseTo(CREATURE.pistonStroke, 2);
+    setJointTargets(c, [0, -1]);
+    for (let i = 0; i < 60; i++) world.step();
+    expect(pistonStates(c)[0].extension).toBeCloseTo(0, 2);
+    world.free();
+  });
+
+  it('床に立ったキャラが下向きのピストンを伸ばすと、体が持ち上がる', () => {
+    const world = new R.World({ x: 0, y: PHYSICS.gravity, z: 0 });
+    world.timestep = PHYSICS.dt;
+    world.createCollider(R.ColliderDesc.cuboid(10, 0.1, 10).setTranslation(0, -0.1, 0));
+    const c = spawnCreature(R, world, withPiston, { position: { x: 0, y: 0.65, z: 0 }, yaw: 0 });
+    for (let i = 0; i < 60; i++) world.step();
+    const before = c.bodies[0].translation().y;
+    setJointTargets(c, [0, 1]);
+    let top = before;
+    for (let i = 0; i < 60; i++) {
+      world.step();
+      top = Math.max(top, c.bodies[0].translation().y);
+    }
+    expect(top - before).toBeGreaterThan(0.3);
+    world.free();
   });
 });

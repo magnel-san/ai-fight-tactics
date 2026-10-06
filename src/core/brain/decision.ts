@@ -1,5 +1,6 @@
 // 判断脳(仕様書セクション7)。体に依存せず、「どの方向へどの速さで進むか」を決めて運動脳に指令する。
-// 入力77:周囲タイル61(4周分)・自分3・相手7・安全円5・時間1。出力3:進む方向(コア基準の水平2成分)と速さ。
+// 入力77:周囲タイル61(4周分)・自分3・相手7・安全円5・時間1。
+// 出力4:進む方向(コア基準の水平2成分)・速さ・ジャンプ指令(0より大きければ跳ぶ)。
 import { BATTLE, BRAIN, STAGE } from '../config';
 import type { Rng } from '../math/rng';
 import type { Fighter } from '../sim/fighter';
@@ -119,6 +120,7 @@ export class DecisionBrain {
       dirX: u * h.xx + w * h.fx,
       dirZ: u * h.xz + w * h.fz,
       speed: (this.output[2] + 1) / 2,
+      jump: this.output[3] > 0 ? 1 : 0,
     };
   }
 }

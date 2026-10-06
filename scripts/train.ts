@@ -15,7 +15,7 @@ import { createDecisionGenome } from '../src/core/brain/decision';
 import { createMotorGenome } from '../src/core/brain/motor';
 import { newCharacter, type Character } from '../src/core/character';
 import { characterToJson, parseCharacter } from '../src/core/codec';
-import { jointCount } from '../src/core/creature/blueprint';
+import { actuatorCount } from '../src/core/creature/blueprint';
 import { SAMPLES } from '../src/core/creature/samples';
 import { Rng } from '../src/core/math/rng';
 import { TASKS, type TaskName } from '../src/core/training/tasks';
@@ -49,7 +49,7 @@ if (arg('level')) character.progress.surviveLevel = Number(arg('level'));
 
 const genome =
   task.brain === 'motor'
-    ? (character.motor ?? createMotorGenome(jointCount(character.blueprint), rng.fork()))
+    ? (character.motor ?? createMotorGenome(actuatorCount(character.blueprint), rng.fork()))
     : (character.decision ?? createDecisionGenome(rng.fork()));
 if (task.brain === 'decision' && !character.motor) throw new Error('運動脳がありません');
 

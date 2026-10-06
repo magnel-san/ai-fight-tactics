@@ -1,20 +1,21 @@
 // 運動脳(仕様書セクション7)。判断脳からの指令(進む方向と速さ)どおりに関節を動かす。
 // 遺伝子 = MLPの重み + リズム周期の遺伝子1個。体ごとに固有で、入力数は 17 + 2×関節数。
-import { BRAIN, CREATURE } from '../config';
-import { jointStates, type Creature } from '../creature/assemble';
+import { BRAIN } from '../config';
+import { actuatorStates, actuatorsOf, type Creature } from '../creature/assemble';
 import { cos, exp, log, sin } from '../math/fmath';
 import { rotateInv } from '../math/quat';
 import type { Rng } from '../math/rng';
 import { roundF16 } from './f16';
 import { mlpForward, mlpInit, mlpParamCount, type MlpShape } from './mlp';
 
-export function motorShape(jointCount: number): MlpShape {
-  return { inputs: BRAIN.motorFixedInputs + 2 * jointCount, hidden: BRAIN.motorHidden, outputs: jointCount };
+/** 運動脳の形。actuators は動かせるブロック(関節 + ピストン)の数 */
+export function motorShape(actuators: number): MlpShape {
+  return { inputs: BRAIN.motorFixedInputs + 2 * actuators, hidden: BRAIN.motorHidden, outputs: actuators };
 }
 
 /** 遺伝子の長さ(MLPの重み + リズム周期) */
-export function motorGenomeLength(jointCount: number): number {
-  return mlpParamCount(motorShape(jointCount)) + 1;
+export function motorGenomeLength(actuators: number): number {
+  return mlpParamCount(motorShape(actuators)) + 1;
 }
 
 /** リズム周期 [s]。遺伝子は周期の対数で持ち、範囲外は端に収める */
@@ -23,9 +24,9 @@ export function rhythmPeriod(genome: Float64Array): number {
   return exp(Math.min(log(BRAIN.rhythmPeriodMax), Math.max(log(BRAIN.rhythmPeriodMin), g)));
 }
 
-export function createMotorGenome(jointCount: number, rng: Rng): Float64Array {
-  const genome = new Float64Array(motorGenomeLength(jointCount));
-  mlpInit(motorShape(jointCount), rng, genome, 0);
+export function createMotorGenome(actuators: number, rng: Rng): Float64Array {
+  const genome = new Float64Array(motorGenomeLength(actuators));
+  mlpInit(motorShape(actuators), rng, genome, 0);
   genome[genome.length - 1] = roundF16(log(BRAIN.rhythmPeriodInit));
   return genome;
 }
@@ -37,6 +38,8 @@ export interface MotorCommand {
   dirZ: number;
   /** 速さ 0〜1 */
   speed: number;
+  /** ジャンプ指令(1 = 跳べ、0 = なし。省略時は 0) */
+  jump?: number;
 }
 
 /** 運動脳の実行器。作業領域を使い回して、毎回のメモリ確保を避ける */
@@ -52,8 +55,8 @@ export class MotorBrain {
     private creature: Creature,
     private genome: Float64Array,
   ) {
-    this.shape = motorShape(creature.joints.length);
-    if (genome.length !== motorGenomeLength(creature.joints.length)) {
+    this.shape = motorShape(actuatorsOf(creature));
+    if (genome.length !== motorGenomeLength(actuatorsOf(creature))) {
       throw new Error(`運動脳の遺伝子の長さが体と合いません:${genome.length}`);
     }
     this.input = new Float64Array(this.shape.inputs);
@@ -97,10 +100,10 @@ export class MotorBrain {
     x[k++] = wy / BRAIN.angvelScale;
     x[k++] = wz / BRAIN.angvelScale;
 
-    // 関節:角度と角速度
-    for (const s of jointStates(this.creature)) {
-      x[k++] = s.angle / CREATURE.jointLimit;
-      x[k++] = s.velocity / BRAIN.jointVelScale;
+    // 関節・ピストン:位置と速さ(どちらも -1〜1 程度にそろえた値)
+    for (const s of actuatorStates(this.creature)) {
+      x[k++] = s.position;
+      x[k++] = s.velocity;
     }
 
     // リズム
@@ -110,6 +113,9 @@ export class MotorBrain {
 
     // 足元
     for (let i = 0; i < 3; i++) x[k++] = holesAhead[i];
+
+    // ジャンプ指令
+    x[k++] = command.jump ?? 0;
 
     mlpForward(this.shape, this.genome, 0, x, this.hidden, this.output);
     return this.output;

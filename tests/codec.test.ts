@@ -31,8 +31,8 @@ describe('キャラのJSON', () => {
   it('キャラの往復で、体・脳・育成状況が一致する', () => {
     const c = sample();
     const json = characterToJson(c);
-    expect(json.version).toBe(2);
-    expect(json.brains.motor!.inputs).toBe(25);
+    expect(json.version).toBe(3);
+    expect(json.brains.motor!.inputs).toBe(26);
     expect(json.brains.motor!.outputs).toBe(4);
     expect(json.brains.decision!.inputs).toBe(77);
     const back = parseCharacter(JSON.stringify(json));
@@ -102,21 +102,48 @@ describe('試合のリプレイ', () => {
   });
 });
 
-describe('形式の移行 1 → 2(判断脳の目を4周に)', () => {
-  it('移行した判断脳は、増えたマスの値に関係なく古い脳と同じ出力になる', async () => {
+describe('形式の移行', () => {
+  it('2 → 3:運動脳にジャンプ指令の入力を足しても、ジャンプ指令が0なら同じ出力', async () => {
+    const { mlpForward } = await import('../src/core/brain/mlp');
+    const { motorShape } = await import('../src/core/brain/motor');
+    // version 2 の運動脳(入力 17 + 8 = 25)を作る
+    const from = { inputs: 25, hidden: 32, outputs: 4 };
+    const { mlpInit, mlpParamCount } = await import('../src/core/brain/mlp');
+    const { roundF16Array } = await import('../src/core/brain/f16');
+    const g2 = new Float64Array(mlpParamCount(from) + 1);
+    mlpInit(from, new Rng(22), g2, 0);
+    g2[g2.length - 1] = 0.25;
+    roundF16Array(g2);
+    const v2 = { ...characterToJson(sample()), version: 2 };
+    v2.brains.motor = { inputs: 25, hidden: 32, outputs: 4, rhythmPeriod: 1, weights: encodeWeights(g2) };
+    v2.brains.decision = null;
+    const c = parseCharacter(v2);
+    expect(c.motor!.length).toBe(mlpParamCount(motorShape(4)) + 1);
+    expect(c.motor![c.motor!.length - 1]).toBe(0.25); // リズム周期の遺伝子は最後のまま
+    const rng = new Rng(5);
+    const x = Array.from({ length: 25 }, () => rng.range(-1, 1));
+    const a = new Float64Array(4);
+    const b = new Float64Array(4);
+    mlpForward(from, g2, 0, x, new Float64Array(32), a);
+    mlpForward(motorShape(4), c.motor!, 0, [...x, 0], new Float64Array(32), b);
+    expect([...b]).toEqual([...a]);
+  });
+
+  it('移行した判断脳は、増えたマスの値に関係なく古い脳と同じ出力になる(1 → 2 → 3)', async () => {
     const { mlpForward, mlpInit } = await import('../src/core/brain/mlp');
     const { DECISION_SHAPE, EYE_HEXES } = await import('../src/core/brain/decision');
     const { hexesWithin } = await import('../src/core/stage/hex');
     const { roundF16Array } = await import('../src/core/brain/f16');
-    const oldShape = { inputs: 35, hidden: DECISION_SHAPE.hidden, outputs: DECISION_SHAPE.outputs };
+    const oldShape = { inputs: 35, hidden: DECISION_SHAPE.hidden, outputs: 3 };
     const oldW = new Float64Array(24 * 35 + 24 + 3 * 24 + 3);
     mlpInit(oldShape, new Rng(9), oldW, 0);
     for (let i = 24 * 35; i < 24 * 35 + 24; i++) oldW[i] = 0.1; // バイアスも移ることを確かめる
     roundF16Array(oldW);
     const v1 = { ...characterToJson(sample()), version: 1 };
     v1.brains.decision = { inputs: 35, hidden: 24, outputs: 3, weights: encodeWeights(oldW) };
+    v1.brains.motor = null; // この確認では判断脳だけを見る
     const c = parseCharacter(v1);
-    expect(c.decision!.length).toBe(24 * 77 + 24 + 3 * 24 + 3);
+    expect(c.decision!.length).toBe(24 * 77 + 24 + 4 * 24 + 4);
 
     const rng = new Rng(4);
     const oldEye = hexesWithin(2);
@@ -126,11 +153,13 @@ describe('形式の移行 1 → 2(判断脳の目を4周に)', () => {
       oldEye.forEach((h, i) => (newIn[EYE_HEXES.findIndex((e) => e.q === h.q && e.r === h.r)] = oldIn[i]));
       for (let i = 19; i < 35; i++) newIn[61 + (i - 19)] = oldIn[i];
       const a = new Float64Array(3);
-      const b = new Float64Array(3);
+      const b = new Float64Array(4);
       mlpForward(oldShape, oldW, 0, oldIn, new Float64Array(24), a);
       mlpForward(DECISION_SHAPE, c.decision!, 0, newIn, new Float64Array(24), b);
-      expect([...b]).toEqual([...a]);
+      // もとの3つの出力は同じで、増えたジャンプ指令の出力は 0(跳ばない)
+      expect([...b.subarray(0, 3)]).toEqual([...a]);
+      expect(b[3]).toBe(0);
     }
-    expect(characterToJson(c).version).toBe(2);
+    expect(characterToJson(c).version).toBe(3);
   });
 });

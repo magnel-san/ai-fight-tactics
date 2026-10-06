@@ -71,3 +71,18 @@ export function remapInputs(old: Float64Array, from: MlpShape, to: MlpShape, inp
   out.set(old.subarray(from.hidden * from.inputs), to.hidden * to.inputs);
   return out;
 }
+
+/**
+ * 出力を後ろに増やす(データ形式の移行用)。増えた出力の重みとバイアスは0にするので、
+ * 増えた出力は常に tanh(0) = 0 になり、もとの出力は変わらない
+ */
+export function appendOutputs(old: Float64Array, from: MlpShape, to: MlpShape): Float64Array {
+  if (from.inputs !== to.inputs || from.hidden !== to.hidden || to.outputs < from.outputs) throw new Error('出力を増やす移行しかできません');
+  if (old.length !== mlpParamCount(from)) throw new Error(`重みの数が違います:${old.length}`);
+  const out = new Float64Array(mlpParamCount(to));
+  const hiddenPart = from.hidden * from.inputs + from.hidden;
+  out.set(old.subarray(0, hiddenPart), 0);
+  out.set(old.subarray(hiddenPart, hiddenPart + from.outputs * from.hidden), hiddenPart);
+  out.set(old.subarray(hiddenPart + from.outputs * from.hidden), hiddenPart + to.outputs * to.hidden);
+  return out;
+}

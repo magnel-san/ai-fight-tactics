@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import type { BlockType } from '../core/config';
 import { CREATURE } from '../core/config';
 import type { Creature } from '../core/creature/assemble';
+import { FACE_DIR } from '../core/creature/blueprint';
 
 export const BLOCK_COLORS: Record<BlockType, number> = {
   core: 0xf2c94c,
@@ -11,6 +12,7 @@ export const BLOCK_COLORS: Record<BlockType, number> = {
   joint: 0x56ccf2,
   bouncy: 0xeb5757,
   grip: 0x6fcf97,
+  piston: 0xc58b4a,
 };
 
 export interface CreatureMesh {
@@ -58,11 +60,23 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
     return m;
   };
 
+  // ピストンの棒:ピストンブロックから親の方向へ、1マス分の長さ。縮んでいるときは親ブロックの中に隠れ、
+  // 伸びると隙間に見える
+  const rodGeometry = new THREE.BoxGeometry(size * 0.35, size * 0.35, CREATURE.pistonStroke);
+  const rodMaterial = new THREE.MeshStandardMaterial({ color: 0x8a8f99, metalness: 0.6, roughness: 0.4, transparent: opts.ghost ?? false, opacity: opts.ghost ? 0.22 : 1 });
+
   creature.blueprint.blocks.forEach((b, i) => {
     const mesh = new THREE.Mesh(geometry, material(b.type));
     mesh.position.set(...creature.localOffsets[i]);
     mesh.castShadow = !opts.ghost;
     groups[creature.segmentOf[i]].add(mesh);
+    if (b.type === 'piston') {
+      const d = new THREE.Vector3(...FACE_DIR[b.face!]);
+      const rod = new THREE.Mesh(rodGeometry, rodMaterial);
+      rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
+      rod.position.copy(mesh.position).addScaledVector(d, -(CREATURE.blockSize / 2 + CREATURE.pistonStroke / 2));
+      groups[creature.segmentOf[i]].add(rod);
+    }
   });
 
   // コアの正面(+z)マーク
@@ -86,6 +100,8 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
     groups,
     dispose() {
       geometry.dispose();
+      rodGeometry.dispose();
+      rodMaterial.dispose();
       markGeometry.dispose();
       if (teamMarker) {
         teamMarker.geometry.dispose();

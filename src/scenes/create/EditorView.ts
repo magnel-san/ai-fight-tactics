@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CREATURE, type BlockType } from '../../core/config';
-import { AXIS_DIR, blockPositions, centerOfMass, type Blueprint, type Face, type Vec3i } from '../../core/creature/blueprint';
+import { AXIS_DIR, blockPositions, centerOfMass, FACE_DIR, type Blueprint, type Face, type Vec3i } from '../../core/creature/blueprint';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
 
 export interface Placement {
@@ -58,6 +58,8 @@ export class EditorView {
   private blockGeometry = new RoundedBoxGeometry(SIZE * 0.98, SIZE * 0.98, SIZE * 0.98, 2, CREATURE.blockRoundness);
   private axisGeometry = new THREE.CylinderGeometry(0.025, 0.025, SIZE * 1.3, 8);
   private axisMaterial = new THREE.MeshBasicMaterial({ color: 0x0b3954 });
+  /** ピストンの伸びる向きの印 */
+  private pistonMaterial = new THREE.MeshBasicMaterial({ color: 0x5a3a12 });
   private frontGeometry = new THREE.BoxGeometry(SIZE * 0.5, SIZE * 0.2, 0.02);
   private frontMaterial = new THREE.MeshBasicMaterial({ color: 0x222222 });
   private materials = new Map<BlockType, THREE.MeshStandardMaterial>();
@@ -153,6 +155,7 @@ export class EditorView {
       this.blockGeometry,
       this.axisGeometry,
       this.axisMaterial,
+      this.pistonMaterial,
       this.frontGeometry,
       this.frontMaterial,
       outlineGeometry,
@@ -187,6 +190,15 @@ export class EditorView {
       this.blocksGroup.add(mesh);
       this.blockMeshes.push(mesh);
       if (b.type === 'joint') mesh.add(this.axisIndicator(AXIS_DIR[b.axis!]));
+      if (b.type === 'piston') {
+        // 伸びる向き(付けた面の向き)に、外側の面から少し突き出た棒を出す
+        const dir = FACE_DIR[b.face!];
+        const rod = new THREE.Mesh(this.axisGeometry, this.pistonMaterial);
+        rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir));
+        rod.position.set(dir[0] * SIZE * 0.3, dir[1] * SIZE * 0.3, dir[2] * SIZE * 0.3);
+        rod.raycast = () => {};
+        mesh.add(rod);
+      }
       if (b.type === 'core') mesh.add(this.frontMark());
     });
 

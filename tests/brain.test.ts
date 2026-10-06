@@ -79,8 +79,8 @@ describe('MLP', () => {
 });
 
 describe('運動脳', () => {
-  it('入出力の数は 17 + 2×関節数 と 関節数', () => {
-    expect(motorShape(4)).toEqual({ inputs: 25, hidden: BRAIN.motorHidden, outputs: 4 });
+  it('入出力の数は 18 + 2×(関節とピストンの数) と、関節とピストンの数', () => {
+    expect(motorShape(4)).toEqual({ inputs: 26, hidden: BRAIN.motorHidden, outputs: 4 });
     expect(motorGenomeLength(4)).toBe(mlpParamCount(motorShape(4)) + 1);
   });
 

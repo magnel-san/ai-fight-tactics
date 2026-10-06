@@ -5,6 +5,7 @@ export const CREATURE = {
   /** 総コスト上限 */
   maxCost: 30,
   /** 関節の最大数(脳の入出力サイズを抑えるため) */
+  /** 関節とピストン(動かせるブロック)の合計の最大数(脳の入出力サイズを抑えるため) */
   maxJoints: 8,
   /** ブロックの最大数 */
   maxBlocks: 24,
@@ -21,6 +22,14 @@ export const CREATURE = {
   /** 関節モーターのトルク上限 [N·m]。高速回転のような挙動を防ぐ */
   jointMaxTorque: 50,
   /**
+   * ピストン:1マス分(ブロック1辺)だけ伸び縮みする。脳の出力が0以上なら伸ばし、0未満なら縮める
+   * (伸び縮みの途中の位置は指定しない)。ばね定数 [N/m]・減衰 [N·s/m]・力の上限 [N]
+   */
+  pistonStroke: 0.4,
+  pistonStiffness: 8000,
+  pistonDamping: 300,
+  pistonMaxForce: 300,
+  /**
    * コライダーを各辺この長さだけ小さくする [m]。
    * 隣り合う別剛体のブロック同士が常に接触して震えるのを防ぐ
    */
@@ -32,7 +41,7 @@ export const CREATURE = {
   blockRoundness: 0.06,
 } as const;
 
-export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'grip';
+export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'grip' | 'piston';
 
 export const BLOCKS: Record<
   BlockType,
@@ -43,6 +52,7 @@ export const BLOCKS: Record<
   joint: { cost: 3, mass: 0.5, friction: 0.8, restitution: 0.1 },
   bouncy: { cost: 2, mass: 0.8, friction: 0.8, restitution: 0.9 },
   grip: { cost: 2, mass: 1.0, friction: 2.0, restitution: 0.1 },
+  piston: { cost: 3, mass: 0.6, friction: 0.8, restitution: 0.1 },
 };
 
 export const PHYSICS = {
@@ -182,19 +192,21 @@ export const MILESTONE = {
 } as const;
 
 export const BRAIN = {
-  /** 運動脳の入力のうち、関節数によらない部分(指令3・姿勢3・速度6・リズム2・足元3) */
-  motorFixedInputs: 17,
+  /** 運動脳の入力のうち、体によらない部分(指令3・姿勢3・速度6・リズム2・足元3・ジャンプ指令1) */
+  motorFixedInputs: 18,
   motorHidden: 32,
   /** 判断脳の「目」:コアのまわり何周分のタイルを見るか(4周 = 61マス) */
   eyeRings: 4,
   /** 判断脳の入力:目61・自分3・相手7・安全円5・時間1 */
   decisionInputs: 77,
   decisionHidden: 24,
-  decisionOutputs: 3,
+  /** 判断脳の出力:進む方向2・速さ1・ジャンプ指令1 */
+  decisionOutputs: 4,
   /** センサー値を -1〜1 程度にそろえるための目安 */
   linvelScale: 2,
   angvelScale: 5,
   jointVelScale: 10,
+  pistonVelScale: 2,
   /** 判断脳のセンサー値をそろえる目安 [m]・[m/s]・[マス] */
   decisionPosScale: 6,
   decisionVelScale: 2,

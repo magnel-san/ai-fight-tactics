@@ -6,7 +6,7 @@ import { createDecisionGenome } from '../../core/brain/decision';
 import { createMotorGenome } from '../../core/brain/motor';
 import type { Character } from '../../core/character';
 import { TRAINING } from '../../core/config';
-import { jointCount } from '../../core/creature/blueprint';
+import { actuatorCount } from '../../core/creature/blueprint';
 import { Rng } from '../../core/math/rng';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import type { Episode, EpisodeFlags } from '../../core/training/episode';
@@ -125,7 +125,7 @@ export function TrainScene({ charId, character, onChange, opponents, active, rep
   /** 鍛える脳の現在の遺伝子(なければ新しく作る) */
   const currentGenome = (c: Character, t: TaskName): Float64Array =>
     TASKS[t].brain === 'motor'
-      ? (c.motor ?? createMotorGenome(jointCount(c.blueprint), new Rng(randomSeed())))
+      ? (c.motor ?? createMotorGenome(actuatorCount(c.blueprint), new Rng(randomSeed())))
       : (c.decision ?? createDecisionGenome(new Rng(randomSeed())));
 
   /** まだ学習していないとき、今の脳の動きを見せる */
