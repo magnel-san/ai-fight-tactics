@@ -53,7 +53,13 @@ export const STANDARD_BODY: Blueprint = {
   blocks: [...QUADRUPED.blocks, { id: 11, type: 'bouncy', parent: 1, face: '+z' }],
 };
 
+/** ジャンプする4本脚:4本脚のコアの下に、下向きのピストンを付けたもの。コスト25、関節4・ピストン1 */
+export const JUMPER: Blueprint = {
+  blocks: [...QUADRUPED.blocks, { id: 11, type: 'piston', parent: 0, face: '-y' }],
+};
+
 export const SAMPLES: Record<string, Blueprint> = {
+  jumper: JUMPER,
   quadruped: QUADRUPED,
   standard: STANDARD_BODY,
   crawler: CRAWLER,
