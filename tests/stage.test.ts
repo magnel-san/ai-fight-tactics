@@ -130,14 +130,15 @@ describe('崩落ルール', () => {
     world.free();
   });
 
-  it('ルールB:3秒滞在すると危険になり、離れると半分の速さで減る', () => {
+  it('ルールB:上限まで滞在すると危険になり、離れると半分の速さで減る', () => {
     const { world, stage } = newStage(7);
     const t = stage.tiles.find((x) => x.q === 0 && x.r === 0)!;
-    tick(stage, 2.0, [{ x: t.x, z: t.z }]);
-    expect(t.stay).toBeCloseTo(2.0, 6);
+    const L = STAGE.stayLimit;
+    tick(stage, L - 1, [{ x: t.x, z: t.z }]);
+    expect(t.stay).toBeCloseTo(L - 1, 6);
     expect(t.state).toBe('safe');
     tick(stage, 2.0);
-    expect(t.stay).toBeCloseTo(1.0, 6);
+    expect(t.stay).toBeCloseTo(L - 2, 6);
     tick(stage, 2.05, [{ x: t.x, z: t.z }]);
     expect(t.state).toBe('warning');
     world.free();
@@ -173,7 +174,7 @@ describe('崩落ルール', () => {
     const t = stage.tiles[60];
     expect(stage.dangerAt(t.x, t.z)).toBe(0);
     expect(stage.dangerAt(100, 100)).toBe(-1);
-    tick(stage, 3.05, [{ x: t.x, z: t.z }]);
+    tick(stage, STAGE.stayLimit + 0.05, [{ x: t.x, z: t.z }]);
     expect(stage.dangerAt(t.x, t.z)).toBeGreaterThanOrEqual(0.5);
     tick(stage, 2.5);
     expect(stage.dangerAt(t.x, t.z)).toBe(-1);
