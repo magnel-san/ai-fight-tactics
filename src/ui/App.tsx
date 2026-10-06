@@ -1,4 +1,4 @@
-// トップ画面。キャラクリエイト・トレーニング・バトル・マイキャラを切り替える。
+// トップ画面。キャラクリエイト・トレーニング・バトル・種目・ランクマッチ・マイキャラ・オンラインを切り替える。
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { rebuildBody } from '../core/character';
 import { parseCharacter } from '../core/codec';
@@ -10,19 +10,21 @@ import { CreateScene } from '../scenes/create/CreateScene';
 import { EventsScene } from '../scenes/events/EventsScene';
 import { LibraryScene } from '../scenes/library/LibraryScene';
 import { OnlineScene } from '../scenes/online/OnlineScene';
+import { RankedScene } from '../scenes/ranked/RankedScene';
 import { TrainScene, type TrainReplay } from '../scenes/train/TrainScene';
 import { newId, saveCharacter, saveReplay, type StoredReplay } from '../storage/db';
 import type { Opponent } from '../training/Trainer';
 import { DeterminismCheck } from './DeterminismCheck';
 import { useCharacterStore } from './useCharacterStore';
 
-type Tab = 'create' | 'train' | 'battle' | 'events' | 'library' | 'online';
+type Tab = 'create' | 'train' | 'battle' | 'events' | 'ranked' | 'library' | 'online';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'create', label: 'キャラクリエイト' },
   { id: 'train', label: 'トレーニング' },
   { id: 'battle', label: 'バトル' },
   { id: 'events', label: '種目' },
+  { id: 'ranked', label: 'ランクマッチ' },
   { id: 'library', label: 'マイキャラ' },
   { id: 'online', label: 'オンライン' },
 ];
@@ -179,6 +181,9 @@ export function App() {
             </div>
             <div className="tab-page" hidden={tab !== 'events'}>
               <EventsScene character={character} entries={battleOpponents} active={tab === 'events'} />
+            </div>
+            <div className="tab-page" hidden={tab !== 'ranked'}>
+              <RankedScene character={character} active={tab === 'ranked'} />
             </div>
             <div className="tab-page scroll" hidden={tab !== 'library'}>
               <LibraryScene

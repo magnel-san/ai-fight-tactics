@@ -27,7 +27,7 @@ npm run test:browsers  # Chromium・Firefox・WebKit での決定性テスト(�
 - 仕様:[docs/SPEC.md](docs/SPEC.md)(実装時に決めたことは付録A)
 - 開発ルール:[CLAUDE.md](CLAUDE.md)
 - 関門の検証結果:[関門1](docs/gate1-report.md)・[関門2](docs/gate2-report.md)
-- オンライン対戦の準備:[docs/ONLINE.md](docs/ONLINE.md)
+- オンライン対戦・ランクマッチの準備:[docs/ONLINE.md](docs/ONLINE.md)
 
 ### 画面なしでのトレーニング
 
@@ -46,7 +46,7 @@ src/workers/   学習用 Web Worker
 src/training/  学習の進行役と Worker のプール
 src/render/    Three.js の描画
 src/core/events/ 種目(かけっこ・サッカー)
-src/scenes/    各画面(キャラクリエイト・トレーニング・バトル・種目・マイキャラ・オンライン)
+src/scenes/    各画面(キャラクリエイト・トレーニング・バトル・種目・ランクマッチ・マイキャラ・オンライン)
 src/storage/   IndexedDB と共有URL
 src/online/    Supabase(任意)
 scripts/       画面なしの学習・検証スクリプト

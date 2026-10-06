@@ -751,3 +751,92 @@ button.small-button {
 .segmented.wrap button {
   flex: 1 0 28%;
 }
+
+/* ランクマッチ */
+.bracket {
+  list-style: none;
+  margin: 6px 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.bracket li {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.bracket li.current {
+  border-color: var(--accent);
+}
+.bracket b {
+  font-weight: 500;
+}
+.bracket b.winner {
+  color: var(--ok);
+  font-weight: 700;
+}
+.live-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+  max-width: min(90%, 520px);
+  padding: 18px 24px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.live-card.error {
+  color: var(--danger);
+}
+.live-card.result-card {
+  top: 20%;
+}
+.live-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+.live-vs {
+  display: grid;
+  gap: 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.live-champion {
+  color: #f2c94c;
+  font-weight: 700;
+}
+.ranked-board {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 16px;
+  background: rgba(18, 22, 31, 0.92);
+}
+.ranked-board table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ranked-board th,
+.ranked-board td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+.ranked-board th {
+  color: var(--muted);
+  font-weight: 500;
+}
+.ranked-board tr.mine td {
+  background: rgba(86, 204, 242, 0.12);
+}

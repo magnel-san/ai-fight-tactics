@@ -13,7 +13,7 @@ export const onlineConfigured = !!URL && !!KEY;
 
 let client: SupabaseClient | null = null;
 
-function supabase(): SupabaseClient {
+export function supabaseClient(): SupabaseClient {
   if (!onlineConfigured) throw new Error('オンライン機能が設定されていません');
   client ??= createClient(URL!, KEY!, { auth: { persistSession: true } });
   return client;
@@ -21,7 +21,7 @@ function supabase(): SupabaseClient {
 
 /** 匿名ログイン(ブラウザごとに1人のユーザーになる) */
 export async function ensureSession(): Promise<string> {
-  const sb = supabase();
+  const sb = supabaseClient();
   const { data } = await sb.auth.getSession();
   if (data.session) return data.session.user.id;
   const { data: signed, error } = await sb.auth.signInAnonymously();
@@ -59,7 +59,7 @@ export async function registerCharacter(c: Character, onlineId?: string): Promis
   if (!c.motor || !c.decision) throw new Error('運動脳と判断脳を鍛えたキャラだけ登録できます');
   await ensureSession();
   const json = characterToJson({ ...c, readOnly: false });
-  const sb = supabase();
+  const sb = supabaseClient();
   if (onlineId) {
     const { error } = await sb.from('characters').update({ name: c.name, data: json }).eq('id', onlineId);
     if (error) throw new Error(error.message);
@@ -72,7 +72,7 @@ export async function registerCharacter(c: Character, onlineId?: string): Promis
 
 export async function myCharacters(): Promise<OnlineCharacter[]> {
   const me = await ensureSession();
-  const { data, error } = await supabase().from('characters').select('id, owner, name, data, updated_at').eq('owner', me).order('updated_at', { ascending: false });
+  const { data, error } = await supabaseClient().from('characters').select('id, owner, name, data, updated_at').eq('owner', me).order('updated_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data as Row[]).map((r) => toOnline(r, me)).filter((x): x is OnlineCharacter => x !== null);
 }
@@ -80,13 +80,13 @@ export async function myCharacters(): Promise<OnlineCharacter[]> {
 /** ランダムな対戦相手(自分以外のキャラ) */
 export async function randomOpponents(n = 8): Promise<OnlineCharacter[]> {
   const me = await ensureSession();
-  const { data, error } = await supabase().rpc('random_characters', { n });
+  const { data, error } = await supabaseClient().rpc('random_characters', { n });
   if (error) throw new Error(error.message);
   return (data as Row[]).map((r) => toOnline(r, me)).filter((x): x is OnlineCharacter => x !== null);
 }
 
 export async function unregister(id: string): Promise<void> {
   await ensureSession();
-  const { error } = await supabase().from('characters').delete().eq('id', id);
+  const { error } = await supabaseClient().from('characters').delete().eq('id', id);
   if (error) throw new Error(error.message);
 }

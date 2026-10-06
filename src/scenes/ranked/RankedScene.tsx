@@ -1,0 +1,668 @@
+// ランクマッチ画面:プレイヤー名とモンスターの登録、自動トーナメントのライブ配信、ランキング。
+// トーナメントは時刻と登録内容だけで決まるので、どのブラウザでも同じ試合が同じ時刻に流れる。
+// 試合は Worker で計算して結果を報告し、配信はメインスレッドで同じ試合を再現して、時刻に合わせて途中から映す。
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Character } from '../../core/character';
+import { BATTLE, PHYSICS, RACE, RANKED } from '../../core/config';
+import { initRapier, type Rapier } from '../../core/physics/rapier';
+import type { RaceRecord } from '../../core/ranked/run';
+import {
+  bracketFor,
+  computeStats,
+  entrantsFor,
+  matchSeed,
+  matchSlotStart,
+  tournamentAt,
+  tournamentStart,
+  type EntryVersion,
+  type RankedOutcome,
+  type RankedResultRow,
+} from '../../core/ranked/tournament';
+import { MatchEpisode } from '../../core/sim/match';
+import * as api from '../../online/ranked';
+import { TEAM_COLORS } from '../../render/creatureMesh';
+import { EpisodeViewer } from '../../render/EpisodeViewer';
+import { getSetting, setSetting } from '../../storage/db';
+
+interface Props {
+  character: Character;
+  active: boolean;
+}
+
+interface LiveMatch {
+  index: number;
+  round: number;
+  a: EntryVersion | null;
+  b: EntryVersion | null;
+  outcome: RankedOutcome | null;
+  /** どちらかのデータが壊れていて試合にならなかった(結果は報告しない) */
+  forfeit: boolean;
+}
+
+interface LiveTournament {
+  t: number;
+  entrants: EntryVersion[];
+  matches: LiveMatch[];
+}
+
+type View = 'live' | 'ranking' | 'entry';
+type SortKey = 'rating' | 'wins' | 'race';
+
+const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+const slotMs = RANKED.slot * 1000;
+const introMs = RANKED.intro * 1000;
+/** 結果がまだ集まっていない過去のトーナメントを、さかのぼって計算する数 */
+const BACKFILL = 4;
+
+/** 計算した試合の結果(同じ組み合わせは二度計算しない) */
+const outcomes = new Map<string, RankedOutcome>();
+
+/** トーナメントの試合を順に計算する(前の試合の勝者が次の試合に進む) */
+async function resolveTournament(t: number, versions: readonly EntryVersion[], onProgress?: (lt: LiveTournament) => void): Promise<LiveTournament> {
+  const entrants = entrantsFor(t, versions);
+  const bracket = bracketFor(entrants.length);
+  const matches: LiveMatch[] = bracket.map((m) => ({
+    index: m.index,
+    round: m.round,
+    a: m.a !== null ? entrants[m.a] : null,
+    b: m.b !== null ? entrants[m.b] : null,
+    outcome: null,
+    forfeit: false,
+  }));
+  const lt: LiveTournament = { t, entrants, matches };
+  onProgress?.(lt);
+  if (bracket.length === 0) return lt;
+  const fighters = await api.entryFighters(entrants.map((e) => e.id));
+  const winnerOf = (m: LiveMatch) => (m.outcome!.advance === 0 ? m.a : m.b);
+  for (const bm of bracket) {
+    const m = matches[bm.index];
+    if (bm.fromA !== null) m.a = winnerOf(matches[bm.fromA]);
+    if (bm.fromB !== null) m.b = winnerOf(matches[bm.fromB]);
+    const fa = fighters.get(m.a!.id) ?? null;
+    const fb = fighters.get(m.b!.id) ?? null;
+    if (!fa || !fb) {
+      m.forfeit = true;
+      m.outcome = {
+        winner: fa ? 0 : fb ? 1 : null,
+        advance: fa || !fb ? 0 : 1,
+        cause: 'fell',
+        time: 0,
+      };
+    } else {
+      const key = `${t}:${bm.index}:${m.a!.id}:${m.b!.id}`;
+      let o = outcomes.get(key);
+      if (!o) {
+        o = await api.computeMatch(fa, fb, matchSeed(t, bm.index));
+        outcomes.set(key, o);
+      }
+      m.outcome = o;
+    }
+    onProgress?.({ ...lt, matches: [...matches] });
+  }
+  return lt;
+}
+
+const reported = new Set<string>();
+
+async function reportAll(lt: LiveTournament): Promise<void> {
+  for (const m of lt.matches) {
+    if (!m.outcome || m.forfeit || !m.a || !m.b) continue;
+    const key = `${lt.t}:${m.index}`;
+    if (reported.has(key)) continue;
+    await api.reportResult(lt.t, m.index, m.a.id, m.b.id, m.outcome);
+    reported.add(key);
+  }
+}
+
+const roundName = (round: number, rounds: number) =>
+  round === rounds - 1 ? '決勝' : round === rounds - 2 ? '準決勝' : round === rounds - 3 ? '準々決勝' : `${round + 1}回戦`;
+
+const causeText = (o: RankedOutcome) =>
+  o.winner === null ? (o.cause === 'both' ? '両者脱落(判定)' : '時間切れ(判定)') : o.cause === 'pushed' ? '押し出し' : '自滅';
+
+const clock = (ms: number) => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+export function RankedScene({ character, active }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewerRef = useRef<EpisodeViewer | null>(null);
+  const rapierRef = useRef<Rapier | null>(null);
+  const [view, setView] = useState<View>('live');
+  const [sortKey, setSortKey] = useState<SortKey>('rating');
+  const [started, setStarted] = useState(false);
+  const [, setTick] = useState(0);
+  const [versions, setVersions] = useState<EntryVersion[]>([]);
+  const [players, setPlayers] = useState<Map<string, string>>(new Map());
+  const [results, setResults] = useState<RankedResultRow[]>([]);
+  const [live, setLive] = useState<LiveTournament | null>(null);
+  const [prev, setPrev] = useState<LiveTournament | null>(null);
+  const [races, setRaces] = useState<Map<number, RaceRecord>>(new Map());
+  const [me, setMe] = useState<string | null>(null);
+  const [nameInput, setNameInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{
+    text: string;
+    error: boolean;
+  } | null>(null);
+  const [fatal, setFatal] = useState<string | null>(null);
+  /** 配信中の試合(`t:m`)。null なら次の確認で映し直す */
+  const shownRef = useRef<string | null>(null);
+  const catchingRef = useRef(false);
+  const liveRef = useRef<LiveTournament | null>(null);
+  liveRef.current = live;
+
+  useEffect(() => {
+    if (active) setStarted(true);
+  }, [active]);
+
+  // 表示の準備
+  useEffect(() => {
+    if (!api.onlineConfigured) return;
+    const viewer = new EpisodeViewer(canvasRef.current!);
+    viewer.endPause = Infinity;
+    viewer.showNothing();
+    viewerRef.current = viewer;
+    let cancelled = false;
+    initRapier().then((R) => {
+      if (!cancelled) rapierRef.current = R;
+    });
+    return () => {
+      cancelled = true;
+      viewer.dispose();
+      viewerRef.current = null;
+    };
+  }, []);
+
+  // サーバーとのやりとりと試合の計算(画面を一度開いたら、ほかの画面にいる間も続ける)
+  useEffect(() => {
+    if (!started || !api.onlineConfigured) return;
+    let cancelled = false;
+    let lastFetch = 0;
+    let lastT = -1;
+    let vs: EntryVersion[] = [];
+    let rs: RankedResultRow[] = [];
+    const loop = async () => {
+      let first = true;
+      while (!cancelled) {
+        try {
+          if (first) {
+            const { id, player } = await api.myPlayer();
+            if (cancelled) return;
+            setMe(id);
+            if (player) setNameInput((n) => n || player.name);
+            first = false;
+          }
+          const now = Date.now();
+          const t = tournamentAt(now);
+          // 出場者を正しく決めるため、トーナメントが始まったら登録の一覧を取り直す
+          if (t !== lastT || now - lastFetch > 60_000) {
+            const [v, p, r] = await Promise.all([api.listEntryVersions(), api.listPlayers(), api.fetchResults()]);
+            vs = v;
+            rs = r;
+            lastFetch = now;
+            lastT = t;
+            if (cancelled) return;
+            setVersions(v);
+            setPlayers(new Map(p.map((x) => [x.id, x.name])));
+            setResults(r);
+          }
+          const cur = await resolveTournament(t, vs, (lt) => !cancelled && setLive(lt));
+          await reportAll(cur);
+          const last = await resolveTournament(t - 1, vs, (lt) => !cancelled && setPrev(lt));
+          await reportAll(last);
+          // 誰も計算しなかった過去のトーナメントの結果を補う
+          const have = new Set(rs.map((r) => `${r.tournament}:${r.match}`));
+          for (let k = 2; k <= BACKFILL && !cancelled; k++) {
+            const tk = t - k;
+            const n = bracketFor(entrantsFor(tk, vs).length).length;
+            let missing = false;
+            for (let i = 0; i < n; i++) if (!have.has(`${tk}:${i}`)) missing = true;
+            if (missing) await reportAll(await resolveTournament(tk, vs));
+          }
+          if (!cancelled) setFatal(null);
+        } catch (e) {
+          // 準備ができていない・通信できないときは、少し待ってからやり直す
+          if (!cancelled) setFatal((e as Error).message);
+          lastT = -1;
+          await new Promise((r) => setTimeout(r, 10_000));
+        }
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    };
+    void loop();
+    return () => {
+      cancelled = true;
+    };
+  }, [started]);
+
+  // 配信:時刻に合わせて、いまの試合を途中から映す
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.speed = active ? 1 : 0;
+    if (!active) {
+      shownRef.current = null;
+      return;
+    }
+    const timer = setInterval(() => {
+      setTick((x) => x + 1);
+      const R = rapierRef.current;
+      const lt = liveRef.current;
+      const now = Date.now();
+      const t = tournamentAt(now);
+      const m = Math.floor((now - tournamentStart(t)) / slotMs);
+      const key = `${t}:${m}`;
+      const offset = now - matchSlotStart(t, m);
+      const match = lt && lt.t === t ? lt.matches[m] : undefined;
+      if (shownRef.current !== null && shownRef.current !== key) {
+        viewer.showNothing();
+        shownRef.current = null;
+      }
+      if (!R || catchingRef.current || shownRef.current === key || offset < introMs || !match?.outcome || match.forfeit) return;
+      // 試合のデータは計算のときに読み込み済み
+      catchingRef.current = true;
+      void (async () => {
+        try {
+          const f = await api.entryFighters([match.a!.id, match.b!.id]);
+          const ep = new MatchEpisode(R, {
+            mode: 'battle',
+            seed: matchSeed(t, m),
+            fighters: [f.get(match.a!.id)!, f.get(match.b!.id)!],
+          });
+          // 途中から見る場合は、いまの時刻まで少しずつ進める(画面を止めないように)
+          const target = () => (Date.now() - matchSlotStart(t, m) - introMs) / 1000;
+          while (!ep.done && ep.time + PHYSICS.dt <= target()) {
+            for (let i = 0; i < 240 && !ep.done && ep.time + PHYSICS.dt <= target(); i++) ep.advance();
+            await new Promise((r) => setTimeout(r, 0));
+          }
+          viewer.setEpisodes(ep);
+          shownRef.current = key;
+        } finally {
+          catchingRef.current = false;
+        }
+      })();
+    }, 250);
+    return () => clearInterval(timer);
+  }, [active, started]);
+
+  // ランキングを開いたら、かけっこの公式記録を測る(登録の版ごとに1回。結果はブラウザに保存する)
+  const latestByOwner = useMemo(() => {
+    const m = new Map<string, EntryVersion>();
+    for (const v of versions) {
+      const cur = m.get(v.owner);
+      if (!cur || v.id > cur.id) m.set(v.owner, v);
+    }
+    return m;
+  }, [versions]);
+
+  useEffect(() => {
+    if (!active || view !== 'ranking') return;
+    let cancelled = false;
+    void (async () => {
+      for (const v of latestByOwner.values()) {
+        if (cancelled) return;
+        if (races.has(v.id)) continue;
+        const key = `ranked-race:${v.id}`;
+        let rec = await getSetting<RaceRecord>(key);
+        if (!rec) {
+          const f = (await api.entryFighters([v.id])).get(v.id);
+          if (!f) continue;
+          rec = await api.computeRace(v.id, f);
+          await setSetting(key, rec);
+        }
+        if (!cancelled) setRaces((m) => new Map(m).set(v.id, rec!));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active, view, latestByOwner]);
+
+  if (!api.onlineConfigured) {
+    return (
+      <div className="library">
+        <section className="card">
+          <h2>ランクマッチ(準備中)</h2>
+          <p>
+            ランクマッチを使うには、オンライン機能の設定が必要です。手順は <code>docs/ONLINE.md</code> にまとめてあります。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  const now = Date.now();
+  const t = tournamentAt(now);
+  const slot = Math.floor((now - tournamentStart(t)) / slotMs);
+  const offset = now - matchSlotStart(t, slot);
+  const cur = live && live.t === t ? live : null;
+  const curMatch = cur?.matches[slot];
+  const nextStart = tournamentStart(t + 1);
+  const playerName = (owner: string) => players.get(owner) ?? '名無し';
+  const label = (e: EntryVersion | null) => (e ? `${e.name}(${playerName(e.owner)})` : '未定');
+
+  // ランキング:試合の時刻が過ぎた結果だけを数える
+  // サーバーの結果に、このブラウザで計算した結果(まだ取り込んでいないもの)を足す
+  const merged = [...results];
+  const known = new Set(results.map((r) => `${r.tournament}:${r.match}`));
+  for (const lt of [prev, live]) {
+    for (const m of lt?.matches ?? []) {
+      if (!m.outcome || m.forfeit || !m.a || !m.b || known.has(`${lt!.t}:${m.index}`)) continue;
+      merged.push({ tournament: lt!.t, match: m.index, a: m.a.id, b: m.b.id, winner: m.outcome.winner, cause: m.outcome.cause });
+    }
+  }
+  const visible = merged.filter((r) => matchSlotStart(r.tournament, r.match) + slotMs <= now);
+  const ownerOf = new Map(versions.map((v) => [v.id, v.owner]));
+  const stats = computeStats(visible, (id) => ownerOf.get(id));
+  const rows = [...latestByOwner.values()].map((v) => {
+    const s = stats.get(v.owner);
+    return {
+      owner: v.owner,
+      player: playerName(v.owner),
+      monster: v.name,
+      rating: s?.rating ?? RANKED.initialRating,
+      games: s ? s.wins + s.losses + s.draws : 0,
+      wins: s?.wins ?? 0,
+      losses: s?.losses ?? 0,
+      draws: s?.draws ?? 0,
+      pushWins: s?.pushWins ?? 0,
+      race: races.get(v.id),
+    };
+  });
+  const raceKey = (r: RaceRecord | undefined) => (r ? (r.best !== null ? r.best : RACE.timeLimit + (RACE.distance - r.distance)) : Infinity);
+  rows.sort((x, y) =>
+    sortKey === 'rating'
+      ? y.rating - x.rating || y.wins - x.wins
+      : sortKey === 'wins'
+        ? y.wins - x.wins || y.rating - x.rating
+        : raceKey(x.race) - raceKey(y.race),
+  );
+
+  const run = async (f: () => Promise<void>) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await f();
+    } catch (e) {
+      setMessage({ text: (e as Error).message, error: true });
+    }
+    setBusy(false);
+  };
+  const myEntry = me ? latestByOwner.get(me) : undefined;
+  const myName = me ? players.get(me) : undefined;
+  const ready = !!character.motor && !!character.decision;
+
+  const bracketView = (lt: LiveTournament, highlight: number | null) => {
+    const rounds = lt.matches.length ? lt.matches[lt.matches.length - 1].round + 1 : 0;
+    const shown = (m: LiveMatch) => matchSlotStart(lt.t, m.index) + introMs + (m.outcome?.time ?? BATTLE.timeLimit) * 1000 <= now;
+    return (
+      <ol className="bracket">
+        {lt.matches.map((m) => (
+          <li key={m.index} className={m.index === highlight ? 'current' : ''}>
+            <span className="muted small">
+              {roundName(m.round, rounds)}・
+              {new Date(matchSlotStart(lt.t, m.index)).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+            <span>
+              <b className={m.outcome && shown(m) && m.outcome.advance === 0 ? 'winner' : ''}>{label(m.a)}</b> vs{' '}
+              <b className={m.outcome && shown(m) && m.outcome.advance === 1 ? 'winner' : ''}>{label(m.b)}</b>
+            </span>
+            {m.outcome && shown(m) && <span className="muted small">{m.forfeit ? '不戦勝' : causeText(m.outcome)}</span>}
+          </li>
+        ))}
+      </ol>
+    );
+  };
+
+  // 配信画面の上に重ねる表示
+  let overlay: React.ReactNode = null;
+  if (fatal) overlay = <div className="live-card error">{fatal}</div>;
+  else if (!cur) overlay = <div className="live-card">トーナメントを準備しています…</div>;
+  else if (cur.entrants.length < 2)
+    overlay = (
+      <div className="live-card">
+        <div className="live-title">出場者が足りません</div>
+        <div>
+          次のトーナメントは{' '}
+          {new Date(nextStart).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}{' '}
+          から(あと {clock(nextStart - now)})
+        </div>
+        <div className="muted small">
+          モンスターを2人以上が登録すると、{RANKED.interval / 60}
+          分ごとに自動でトーナメントが開かれます
+        </div>
+      </div>
+    );
+  else if (!curMatch)
+    overlay = (
+      <div className="live-card">
+        <div className="live-title">今回のトーナメントは終わりました</div>
+        {(() => {
+          const final = cur.matches[cur.matches.length - 1];
+          const champ = final.outcome ? (final.outcome.advance === 0 ? final.a : final.b) : null;
+          return champ && <div className="live-champion">優勝:{label(champ)}</div>;
+        })()}
+        <div>次のトーナメントまで あと {clock(nextStart - now)}</div>
+      </div>
+    );
+  else if (offset < introMs)
+    overlay = (
+      <div className="live-card">
+        <div className="live-title">
+          {roundName(curMatch.round, cur.matches[cur.matches.length - 1].round + 1)}
+          (第{slot + 1}試合)
+        </div>
+        <div className="live-vs">
+          <span style={{ color: hex(TEAM_COLORS[0]) }}>{label(curMatch.a)}</span>
+          <span className="muted">VS</span>
+          <span style={{ color: hex(TEAM_COLORS[1]) }}>{label(curMatch.b)}</span>
+        </div>
+        <div>試合開始まで {clock(introMs - offset)}</div>
+      </div>
+    );
+  else if (!curMatch.outcome) overlay = <div className="live-card">試合を計算しています…</div>;
+  else if (curMatch.forfeit) overlay = <div className="live-card">相手のデータが読めないため、不戦勝です</div>;
+  else {
+    const elapsed = (offset - introMs) / 1000;
+    const o = curMatch.outcome;
+    overlay =
+      elapsed >= o.time ? (
+        <div className="live-card result-card">
+          <div className="live-title">{o.winner === null ? '引き分け' : `${label(o.winner === 0 ? curMatch.a : curMatch.b)} の勝ち`}</div>
+          <div className="muted">
+            {causeText(o)}・{o.time.toFixed(1)}秒{o.winner === null ? `・${label(o.advance === 0 ? curMatch.a : curMatch.b)} が勝ち上がり` : ''}
+          </div>
+          <div className="muted small">次の試合まで {clock(slotMs - offset)}</div>
+        </div>
+      ) : (
+        <div className="battle-hud">
+          <div className="timer">{Math.max(0, BATTLE.timeLimit - elapsed).toFixed(0)}</div>
+          <div style={{ color: hex(TEAM_COLORS[0]) }}>● {label(curMatch.a)}</div>
+          <div style={{ color: hex(TEAM_COLORS[1]) }}>● {label(curMatch.b)}</div>
+          <div className="safe">LIVE</div>
+        </div>
+      );
+  }
+
+  return (
+    <div className="battle">
+      <aside className="panel">
+        <h2>ランクマッチ</h2>
+        <div className="segmented">
+          <button className={view === 'live' ? 'selected' : ''} onClick={() => setView('live')}>
+            配信
+          </button>
+          <button className={view === 'ranking' ? 'selected' : ''} onClick={() => setView('ranking')}>
+            ランキング
+          </button>
+          <button className={view === 'entry' ? 'selected' : ''} onClick={() => setView('entry')}>
+            登録
+          </button>
+        </div>
+
+        {view === 'entry' && (
+          <>
+            <h3>プレイヤー名</h3>
+            <input type="text" maxLength={20} value={nameInput} placeholder="20文字まで" onChange={(e) => setNameInput(e.target.value)} />
+            <div className="row">
+              <button
+                disabled={busy || !me}
+                onClick={() =>
+                  run(async () => {
+                    await api.savePlayerName(nameInput);
+                    setPlayers(new Map(players).set(me!, nameInput.trim()));
+                    setMessage({
+                      text: 'プレイヤー名を登録しました',
+                      error: false,
+                    });
+                  })
+                }
+              >
+                名前を登録
+              </button>
+            </div>
+            <h3>出場するモンスター(1人1体)</h3>
+            <p className="muted small">
+              {myEntry ? `いまの登録:「${myEntry.name}」(${new Date(myEntry.createdAt).toLocaleString()})` : 'まだ登録していません'}
+            </p>
+            <div className="row">
+              <button
+                className="primary"
+                disabled={busy || !ready || !myName}
+                onClick={() =>
+                  run(async () => {
+                    await api.registerRankedEntry(character);
+                    setVersions(await api.listEntryVersions());
+                    setMessage({
+                      text: `「${character.name}」を登録しました。次のトーナメントから出場します`,
+                      error: false,
+                    });
+                  })
+                }
+              >
+                「{character.name}」で出場する
+              </button>
+            </div>
+            {!myName && <p className="message">先にプレイヤー名を登録してください</p>}
+            {!ready && <p className="message">運動脳と判断脳を鍛えたキャラだけ登録できます</p>}
+            <p className="muted small">
+              {RANKED.interval / 60}
+              分ごとに、登録されたモンスターからトーナメント(最大
+              {RANKED.maxEntrants}体、多いときは抽選)が組まれ、
+              {RANKED.slot / 60}
+              分ごとに1試合ずつ自動で戦います。試合はみんなのブラウザで同じように再現され、結果からレートが決まります。登録し直すと、次のトーナメントから新しいモンスターで出場します。
+            </p>
+          </>
+        )}
+
+        {view === 'live' && (
+          <>
+            <p className="muted small">
+              {cur && cur.entrants.length >= 2 ? `今回のトーナメント(${cur.entrants.length}体)` : '今回のトーナメント'}
+              ・次は{' '}
+              {new Date(nextStart).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}{' '}
+              から
+            </p>
+            {cur && cur.matches.length > 0 && bracketView(cur, slot)}
+            {prev && prev.matches.length > 0 && (
+              <>
+                <h3>前回のトーナメント</h3>
+                {bracketView(prev, null)}
+              </>
+            )}
+          </>
+        )}
+
+        {view === 'ranking' && (
+          <>
+            <p className="muted small">
+              レートは全員 {RANKED.initialRating} から始まり、ランクマッチの勝敗で上下します。かけっこは {RACE.distance}m の公式記録(決まった
+              {RANKED.raceSeeds.length}
+              回の最速)です。
+            </p>
+            <div className="segmented">
+              {(
+                [
+                  ['rating', 'レート'],
+                  ['wins', '勝利数'],
+                  ['race', 'かけっこ'],
+                ] as const
+              ).map(([k, l]) => (
+                <button key={k} className={sortKey === k ? 'selected' : ''} onClick={() => setSortKey(k)}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {message && <p className={message.error ? 'message error' : 'message'}>{message.text}</p>}
+      </aside>
+      <div className="viewport">
+        <canvas ref={canvasRef} />
+        {view === 'ranking' ? (
+          <div className="ranked-board">
+            <table>
+              <thead>
+                <tr>
+                  <th>順位</th>
+                  <th>プレイヤー</th>
+                  <th>モンスター</th>
+                  <th>レート</th>
+                  <th>勝利数</th>
+                  <th>成績</th>
+                  <th>かけっこ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="muted">
+                      まだ登録がありません
+                    </td>
+                  </tr>
+                )}
+                {rows.map((r, i) => (
+                  <tr key={r.owner} className={r.owner === me ? 'mine' : ''}>
+                    <td>{i + 1}</td>
+                    <td>{r.player}</td>
+                    <td>{r.monster}</td>
+                    <td>{Math.round(r.rating)}</td>
+                    <td>{r.wins}</td>
+                    <td className="muted small">
+                      {r.games}戦 {r.wins}勝{r.losses}敗{r.draws ? `${r.draws}分` : ''}
+                      {r.pushWins ? `(押し出し${r.pushWins})` : ''}
+                    </td>
+                    <td>
+                      {r.race ? (
+                        r.race.best !== null ? (
+                          `${r.race.best.toFixed(2)}秒`
+                        ) : (
+                          `${r.race.distance.toFixed(1)}m`
+                        )
+                      ) : (
+                        <span className="muted">計測中…</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          overlay
+        )}
+      </div>
+    </div>
+  );
+}
