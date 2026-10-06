@@ -7,7 +7,7 @@ import type { FighterData } from '../core/training/tasks';
 import { pushOpponents } from '../data/bots';
 import { BattleScene, type BattleRecord, type OpponentEntry } from '../scenes/battle/BattleScene';
 import { CreateScene } from '../scenes/create/CreateScene';
-import { EventsScene } from '../scenes/events/EventsScene';
+import { EVENT_REQUIRED_TASK, EventsScene } from '../scenes/events/EventsScene';
 import { LibraryScene } from '../scenes/library/LibraryScene';
 import { OnlineScene } from '../scenes/online/OnlineScene';
 import { RankedScene } from '../scenes/ranked/RankedScene';
@@ -71,6 +71,7 @@ export function App() {
           label: c.name,
           kind: s.source === 'mine' ? '保存キャラ' : '受け取ったキャラ',
           data: { blueprint: c.blueprint, motor: c.motor, decision: c.decision, controller: 'brain' },
+          passed: c.progress.passed,
         });
       } catch {
         // 読めないデータは一覧に出さない
@@ -80,6 +81,9 @@ export function App() {
     if (preferredOpponent) list.sort((a, b) => (a.id === preferredOpponent ? -1 : b.id === preferredOpponent ? 1 : 0));
     return list;
   }, [store.library, store.activeId, preferredOpponent]);
+
+  // 種目に参加できるのは「対象を追う」に合格したキャラだけ(BOT は合格済み)
+  const eventEntries = useMemo(() => battleOpponents.filter((e) => !e.passed || e.passed.includes(EVENT_REQUIRED_TASK)), [battleOpponents]);
 
   // ライバル練習試合の相手:対戦相手プール(受け取ったキャラ・過去の自分など)
   const rivalOpponents = useMemo<Opponent[]>(() => {
@@ -180,7 +184,7 @@ export function App() {
               />
             </div>
             <div className="tab-page" hidden={tab !== 'events'}>
-              <EventsScene character={character} entries={battleOpponents} active={tab === 'events'} />
+              <EventsScene character={character} entries={eventEntries} active={tab === 'events'} />
             </div>
             <div className="tab-page" hidden={tab !== 'ranked'}>
               <RankedScene character={character} active={tab === 'ranked'} />

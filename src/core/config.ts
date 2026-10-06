@@ -171,6 +171,9 @@ export const AVOID_TASK = {
   fallPenalty: 20,
   /** 合格条件:崩れたはずのタイルに触れていた時間の合計がこれ未満で、60秒落ちなかった [s] */
   passForbiddenTime: 3,
+  /** 合格の確認:confirmEpisodes 回のうち、条件を満たす必要がある回数(合格しやすくするため6回から半分にした) */
+  confirmEpisodes: 9,
+  confirmPassCount: 3,
 } as const;
 
 /** トレーニング「穴をまたぐ」(メニュー3) */
@@ -196,6 +199,9 @@ export const SURVIVE_TASK = {
   levelPace: [0.4, 0.5, 0.6, 0.8, 1.0],
   /** 合格に必要なレベル */
   passLevel: 3,
+  /** 合格の確認:confirmEpisodes 回のうち、生き残る必要がある回数(合格しやすくするため6回から半分にした) */
+  confirmEpisodes: 9,
+  confirmPassCount: 3,
   /** 安全なタイルの上にいるときの加点、危険なタイルの上にいるときの減点 [/s] */
   safeBonus: 1,
   dangerPenalty: 1,
@@ -224,9 +230,9 @@ export const PUSH_TASK = {
   /** 相手を危険な場所へ近づけた量にかける重み */
   pushWeight: 2,
   aliveBonus: 0.2,
-  /** 合格の確認の試合数と、必要な勝ち数(勝率60%) */
+  /** 合格の確認の試合数と、必要な勝ち数(勝率30%。合格しやすくするため6勝から半分にした) */
   confirmMatches: 10,
-  confirmWins: 6,
+  confirmWins: 3,
 } as const;
 
 /**

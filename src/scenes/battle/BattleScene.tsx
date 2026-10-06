@@ -5,7 +5,7 @@ import type { Character } from '../../core/character';
 import { BATTLE, STAGE } from '../../core/config';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import { MatchEpisode, type MatchResult } from '../../core/sim/match';
-import type { FighterData } from '../../core/training/tasks';
+import type { FighterData, TaskName } from '../../core/training/tasks';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { downloadReplay, replayShareUrl } from '../../storage/share';
 import { deleteReplay, listReplays, type StoredReplay } from '../../storage/db';
@@ -17,6 +17,8 @@ export interface OpponentEntry {
   /** 一覧での補足(「BOT」「保存キャラ」「友人」など) */
   kind: string;
   data: FighterData;
+  /** 合格したトレーニング(わからない BOT などは省略) */
+  passed?: readonly TaskName[];
 }
 
 /** 試合の記録(リプレイ)。シードと試合時点の両キャラのデータだけを持つ */

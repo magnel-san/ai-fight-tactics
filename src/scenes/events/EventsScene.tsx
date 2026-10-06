@@ -1,4 +1,5 @@
 // 種目の画面:かけっこ(最大4体)とサッカー(3対3)。どちらも運動脳だけで動く。
+// 参加できるのは、トレーニング「対象を追う」に合格したキャラだけ(指令の方向へまっすぐ進めないと競技にならないため)。
 // 参加するキャラは、自分のキャラと、バトルの対戦相手の一覧(BOT・保存キャラ・受け取ったキャラ)から選ぶ。
 import { useEffect, useRef, useState } from 'react';
 import type { Character } from '../../core/character';
@@ -6,7 +7,7 @@ import { RACE, SOCCER } from '../../core/config';
 import { RaceEpisode, type RaceResult } from '../../core/events/race';
 import { SoccerEpisode, type SoccerResult } from '../../core/events/soccer';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
-import type { FighterData } from '../../core/training/tasks';
+import { TASKS, type FighterData, type TaskName } from '../../core/training/tasks';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { TEAM_COLORS } from '../../render/creatureMesh';
 import type { OpponentEntry } from '../battle/BattleScene';
@@ -24,6 +25,9 @@ const ME = '__me__';
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
+/** 種目に参加するために合格が必要なトレーニング */
+export const EVENT_REQUIRED_TASK: TaskName = 'chase';
+
 export function EventsScene({ character, entries, active }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<EpisodeViewer | null>(null);
@@ -40,7 +44,7 @@ export function EventsScene({ character, entries, active }: Props) {
   const [error, setError] = useState<string | null>(null);
   const lastHud = useRef(0);
 
-  const ready = !!character.motor;
+  const ready = !!character.motor && character.progress.passed.includes(EVENT_REQUIRED_TASK);
 
   useEffect(() => {
     const viewer = new EpisodeViewer(canvasRef.current!);
@@ -64,7 +68,7 @@ export function EventsScene({ character, entries, active }: Props) {
   /** 選んだIDのキャラのデータと名前 */
   const pick = (id: string): { name: string; data: FighterData } | null => {
     if (id === ME) {
-      return character.motor
+      return ready && character.motor
         ? { name: character.name, data: { blueprint: character.blueprint, motor: character.motor, decision: character.decision, controller: 'brain' } }
         : null;
     }
@@ -80,7 +84,7 @@ export function EventsScene({ character, entries, active }: Props) {
     setSoccer(null);
     const chosen = [ME, ...runners].map(pick).filter((x): x is NonNullable<typeof x> => x !== null);
     if (chosen.length === 0) {
-      setError('運動脳を鍛えたキャラが必要です');
+      setError(`トレーニング「${TASKS[EVENT_REQUIRED_TASK].label}」に合格したキャラが必要です`);
       return;
     }
     const ep = new RaceEpisode(R, chosen.map((c) => c.data), randomSeed());
@@ -106,7 +110,7 @@ export function EventsScene({ character, entries, active }: Props) {
     const a = teamA.map(pick);
     const b = teamB.map(pick);
     if (a.some((x) => !x) || b.some((x) => !x)) {
-      setError(`両チームとも${SOCCER.teamSize}体を選んでください(自分のキャラは運動脳を鍛えてから)`);
+      setError(`両チームとも${SOCCER.teamSize}体を選んでください(自分のキャラは「${TASKS[EVENT_REQUIRED_TASK].label}」に合格してから)`);
       return;
     }
     const ep = new SoccerEpisode(
@@ -154,7 +158,7 @@ export function EventsScene({ character, entries, active }: Props) {
             サッカー(3対3)
           </button>
         </div>
-        {!ready && <p className="message">運動脳(トレーニングの「目標地点への移動」)を鍛えると参加できます</p>}
+        {!ready && <p className="message">トレーニング「{TASKS[EVENT_REQUIRED_TASK].label}」に合格すると参加できます</p>}
 
         {mode === 'race' ? (
           <>

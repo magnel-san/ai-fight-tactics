@@ -111,23 +111,23 @@ export const TASKS: Record<TaskName, TaskDef> = {
     label: '危険なタイルを避ける',
     brain: 'decision',
     note: '判断脳を鍛える。床は崩れないが、赤いタイル(崩れる予定・崩れたはずのタイル)を踏むと減点',
-    passCondition: `${AVOID_TASK.timeLimit}秒のあいだ、崩れたはずのタイルに触れた時間 ${AVOID_TASK.passForbiddenTime}秒未満`,
+    passCondition: `${AVOID_TASK.confirmEpisodes}回中${AVOID_TASK.confirmPassCount}回、${AVOID_TASK.timeLimit}秒のあいだ崩れたはずのタイルに触れた時間 ${AVOID_TASK.passForbiddenTime}秒未満`,
     createEpisode: (R, setup, genome, seed) =>
       new MatchEpisode(R, {
         mode: 'avoid',
         seed,
         fighters: [{ blueprint: setup.blueprint, motor: needMotor(setup), decision: genome, controller: 'brain' }],
       }),
-    confirmEpisodes: 9,
-    passed: (o) => successCount(o) >= 6,
-    describe: (o) => `${successCount(o)} / ${o.length} 回、ほぼ踏まずに${AVOID_TASK.timeLimit}秒(6回で合格)`,
+    confirmEpisodes: AVOID_TASK.confirmEpisodes,
+    passed: (o) => successCount(o) >= AVOID_TASK.confirmPassCount,
+    describe: (o) => `${successCount(o)} / ${o.length} 回、ほぼ踏まずに${AVOID_TASK.timeLimit}秒(${AVOID_TASK.confirmPassCount}回で合格)`,
   },
   survive: {
     name: 'survive',
     label: '崩落ステージを生き残る',
     brain: 'decision',
     note: '判断脳を鍛える。1体で崩落ステージを生き残る。レベル1〜5で崩落ペースが上がる',
-    passCondition: `レベル${SURVIVE_TASK.passLevel}で${SURVIVE_TASK.timeLimit}秒生存`,
+    passCondition: `レベル${SURVIVE_TASK.passLevel}で${SURVIVE_TASK.confirmEpisodes}回中${SURVIVE_TASK.confirmPassCount}回、${SURVIVE_TASK.timeLimit}秒生存`,
     createEpisode: (R, setup, genome, seed) =>
       new MatchEpisode(R, {
         mode: 'survive',
@@ -135,9 +135,9 @@ export const TASKS: Record<TaskName, TaskDef> = {
         pace: levelPace(setup.level),
         fighters: [{ blueprint: setup.blueprint, motor: needMotor(setup), decision: genome, controller: 'brain' }],
       }),
-    confirmEpisodes: 9,
-    passed: (o) => successCount(o) >= 6,
-    describe: (o) => `${successCount(o)} / ${o.length} 回、${SURVIVE_TASK.timeLimit}秒生存(6回で合格)`,
+    confirmEpisodes: SURVIVE_TASK.confirmEpisodes,
+    passed: (o) => successCount(o) >= SURVIVE_TASK.confirmPassCount,
+    describe: (o) => `${successCount(o)} / ${o.length} 回、${SURVIVE_TASK.timeLimit}秒生存(${SURVIVE_TASK.confirmPassCount}回で合格)`,
   },
   push: {
     name: 'push',
