@@ -15,6 +15,13 @@ interface Props {
   onBattle(characterId: string): void;
 }
 
+const REPLAY_KINDS: Record<StoredReplay['kind'], string> = {
+  battle: 'バトル',
+  milestone: 'マイルストーン',
+  tournament: 'トーナメント',
+  random: 'ランダムマッチ',
+};
+
 export function LibraryScene({ store, active, onPlayReplay, onBattle }: Props) {
   const { character } = store;
   const [url, setUrl] = useState<string | null>(null);
@@ -72,12 +79,7 @@ export function LibraryScene({ store, active, onPlayReplay, onBattle }: Props) {
         <h2>編集中のキャラ</h2>
         <label className="field">
           名前
-          <input
-            type="text"
-            value={character.name}
-            maxLength={40}
-            onChange={(e) => store.setCharacter((c) => ({ ...c, name: e.target.value }))}
-          />
+          <input type="text" value={character.name} maxLength={40} onChange={(e) => store.setCharacter((c) => ({ ...c, name: e.target.value }))} />
         </label>
         <p className="muted">
           コスト {totalCost(character.blueprint)}・関節 {jointCount(character.blueprint)}・合格:
@@ -197,13 +199,15 @@ export function LibraryScene({ store, active, onPlayReplay, onBattle }: Props) {
       <section className="card">
         <h2>リプレイ</h2>
         <ul className="list">
-          {replays.length === 0 && <li className="muted">まだありません。バトルの後や、トレーニングのマイルストーンで自動保存されます。</li>}
+          {replays.length === 0 && (
+            <li className="muted">まだありません。バトル・トーナメント・ランダムマッチの後や、トレーニングのマイルストーンで自動保存されます。</li>
+          )}
           {replays.map((r) => (
             <li key={r.id}>
               <div>
                 <div className="name">{r.title}</div>
                 <div className="muted small">
-                  {r.kind === 'battle' ? 'バトル' : 'マイルストーン'}・{new Date(r.createdAt).toLocaleString()}
+                  {REPLAY_KINDS[r.kind]}・{new Date(r.createdAt).toLocaleString()}
                 </div>
               </div>
               <div className="actions">

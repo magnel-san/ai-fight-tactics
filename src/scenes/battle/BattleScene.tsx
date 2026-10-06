@@ -121,7 +121,8 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
     return () => clearTimeout(timer);
   }, [active, result]);
 
-  const play = (rec: BattleRecord, skipToEnd = false) => {
+  /** 試合を再生する。save = true は新しい試合(終わったらリプレイとして保存する)。リプレイの再生では保存しない */
+  const play = (rec: BattleRecord, skipToEnd = false, save = false) => {
     const R = rapierRef.current;
     const viewer = viewerRef.current;
     if (!R || !viewer) return;
@@ -151,7 +152,7 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
       if (r && !reported) {
         reported = true;
         setResult(r);
-        finishedRef.current?.({ ...rec, result: r });
+        if (save) finishedRef.current?.({ ...rec, result: r });
       }
     };
     if (skipToEnd) while (!ep.done) ep.advance();
@@ -175,7 +176,7 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
       return;
     }
     const me: FighterData = { blueprint: character.blueprint, motor: character.motor!, decision: character.decision!, controller: 'brain' };
-    play({ seed: randomSeed(), names: [character.name, opponent.label], fighters: [me, opponent.data] }, skipToEnd);
+    play({ seed: randomSeed(), names: [character.name, opponent.label], fighters: [me, opponent.data] }, skipToEnd, true);
   };
 
   const remaining = hud ? Math.max(0, BATTLE.timeLimit - hud.time) : BATTLE.timeLimit;

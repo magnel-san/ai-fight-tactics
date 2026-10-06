@@ -840,3 +840,6 @@ button.small-button {
 .ranked-board tr.mine td {
   background: rgba(86, 204, 242, 0.12);
 }
+.bracket .replay-button {
+  margin-left: 8px;
+}

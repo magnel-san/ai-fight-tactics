@@ -30,7 +30,8 @@ export interface StoredHistory {
 
 export interface StoredReplay {
   id: string;
-  kind: 'battle' | 'milestone';
+  /** battle = バトル、milestone = トレーニングの名場面、tournament = ランクマッチのトーナメント、random = ランダムマッチ */
+  kind: 'battle' | 'milestone' | 'tournament' | 'random';
   title: string;
   createdAt: number;
   /** 再生に必要なデータ(シードと、試合時点のキャラのデータ) */

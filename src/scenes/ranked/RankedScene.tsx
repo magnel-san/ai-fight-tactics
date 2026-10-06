@@ -23,7 +23,8 @@ import { MatchEpisode } from '../../core/sim/match';
 import * as api from '../../online/ranked';
 import { TEAM_COLORS } from '../../render/creatureMesh';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
-import { getSetting, setSetting } from '../../storage/db';
+import { getSetting, saveReplay, setSetting } from '../../storage/db';
+import type { BattleRecord } from '../battle/BattleScene';
 
 interface Props {
   /** いまのキャラの id(モンスターの識別子にする) */
@@ -109,6 +110,38 @@ async function resolveTournament(t: number, versions: readonly EntryVersion[], o
 
 const reported = new Set<string>();
 
+/**
+ * 自分のモンスターが出た試合を、マイキャラのリプレイに保存する(試合の配信が終わってから。一度保存したら、消しても保存し直さない)
+ */
+async function saveMyReplays(lt: LiveTournament, me: string, playerName: (owner: string) => string): Promise<void> {
+  const rounds = lt.matches.length ? lt.matches[lt.matches.length - 1].round + 1 : 0;
+  for (const m of lt.matches) {
+    if (!m.outcome || m.forfeit || !m.a || !m.b) continue;
+    const side = m.a.owner === me ? 0 : m.b.owner === me ? 1 : -1;
+    if (side < 0) continue;
+    const end = matchSlotStart(lt.t, m.index) + introMs + m.outcome.time * 1000;
+    if (end > Date.now()) continue;
+    const id = `tournament:${lt.t}:${m.index}`;
+    const flag = `replay-saved:${id}`;
+    if (await getSetting<boolean>(flag)) continue;
+    const f = await api.entryFighters([m.a.id, m.b.id]);
+    const fa = f.get(m.a.id);
+    const fb = f.get(m.b.id);
+    if (!fa || !fb) continue;
+    const names: [string, string] = [`${m.a.name}(${playerName(m.a.owner)})`, `${m.b.name}(${playerName(m.b.owner)})`];
+    const result = m.outcome.winner === null ? '引き分け' : m.outcome.winner === side ? '勝ち' : '負け';
+    const record: BattleRecord = { seed: matchSeed(lt.t, m.index), names, fighters: [fa, fb] };
+    await saveReplay({
+      id,
+      kind: 'tournament',
+      title: `トーナメント ${roundName(m.round, rounds)}:${names[0]} vs ${names[1]}(${result})`,
+      createdAt: end,
+      data: record,
+    });
+    await setSetting(flag, true);
+  }
+}
+
 async function reportAll(lt: LiveTournament): Promise<void> {
   for (const m of lt.matches) {
     if (!m.outcome || m.forfeit || !m.a || !m.b) continue;
@@ -155,6 +188,11 @@ export function RankedScene({ charId, character, active }: Props) {
     error: boolean;
   } | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
+  /** 再生中のリプレイ(いまのトーナメントの、終わった試合)。次のトーナメントが始まったら消える */
+  const [replay, setReplay] = useState<{ t: number; m: number } | null>(null);
+  const [replaySpeed, setReplaySpeed] = useState<1 | 4>(1);
+  const replayRef = useRef(replay);
+  replayRef.current = replay;
   /** 配信中の試合(`t:m`)。null なら次の確認で映し直す */
   const shownRef = useRef<string | null>(null);
   const catchingRef = useRef(false);
@@ -191,6 +229,8 @@ export function RankedScene({ charId, character, active }: Props) {
     let lastT = -1;
     let vs: EntryVersion[] = [];
     let rs: RankedResultRow[] = [];
+    let myId = '';
+    let names = new Map<string, string>();
     const loop = async () => {
       let first = true;
       while (!cancelled) {
@@ -198,6 +238,7 @@ export function RankedScene({ charId, character, active }: Props) {
           if (first) {
             const { id, player } = await api.myPlayer();
             if (cancelled) return;
+            myId = id;
             setMe(id);
             if (player) setNameInput((n) => n || player.name);
             first = false;
@@ -219,7 +260,8 @@ export function RankedScene({ charId, character, active }: Props) {
             lastT = t;
             if (cancelled) return;
             setVersions(v);
-            setPlayers(new Map(p.map((x) => [x.id, x.name])));
+            names = new Map(p.map((x) => [x.id, x.name]));
+            setPlayers(names);
             setResults(r);
             setRandomMatches(rm);
             setRandomResults(rr);
@@ -230,6 +272,9 @@ export function RankedScene({ charId, character, active }: Props) {
           await reportAll(cur);
           const last = await resolveTournament(t - 1, vs, (lt) => !cancelled && setPrev(lt));
           await reportAll(last);
+          const nameOf = (owner: string) => names.get(owner) ?? '名無し';
+          await saveMyReplays(last, myId, nameOf);
+          await saveMyReplays(cur, myId, nameOf);
           // 誰も計算しなかった過去のトーナメントの結果を補う
           const have = new Set(rs.map((r) => `${r.tournament}:${r.match}`));
           for (let k = 2; k <= BACKFILL && !cancelled; k++) {
@@ -259,7 +304,7 @@ export function RankedScene({ charId, character, active }: Props) {
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    viewer.speed = active ? 1 : 0;
+    viewer.speed = active ? (replay ? replaySpeed : 1) : 0;
     if (!active) {
       shownRef.current = null;
       return;
@@ -270,6 +315,13 @@ export function RankedScene({ charId, character, active }: Props) {
       const lt = liveRef.current;
       const now = Date.now();
       const t = tournamentAt(now);
+      // リプレイを見ている間は配信を止める。次のトーナメントが始まったら、前のトーナメントのリプレイは消す
+      if (replayRef.current) {
+        if (replayRef.current.t === t) return;
+        setReplay(null);
+        viewer.showNothing();
+        shownRef.current = null;
+      }
       const m = Math.floor((now - tournamentStart(t)) / slotMs);
       const key = `${t}:${m}`;
       const offset = now - matchSlotStart(t, m);
@@ -303,7 +355,27 @@ export function RankedScene({ charId, character, active }: Props) {
       })();
     }, 250);
     return () => clearInterval(timer);
-  }, [active, started]);
+  }, [active, started, replay, replaySpeed]);
+
+  /** いまのトーナメントの終わった試合を、最初から再生する */
+  const playReplay = async (lt: LiveTournament, m: LiveMatch) => {
+    const R = rapierRef.current;
+    const viewer = viewerRef.current;
+    if (!R || !viewer || !m.a || !m.b) return;
+    const f = await api.entryFighters([m.a.id, m.b.id]);
+    const fa = f.get(m.a.id);
+    const fb = f.get(m.b.id);
+    if (!fa || !fb) return;
+    viewer.setEpisodes(new MatchEpisode(R, { mode: 'battle', seed: matchSeed(lt.t, m.index), fighters: [fa, fb] }));
+    shownRef.current = null;
+    setReplay({ t: lt.t, m: m.index });
+  };
+
+  const backToLive = () => {
+    setReplay(null);
+    viewerRef.current?.showNothing();
+    shownRef.current = null;
+  };
 
   // いまのトーナメントの出場登録(プレイヤーごとの最新)と、モンスターごとの最新の版
   const latestByOwner = useMemo(() => {
@@ -437,7 +509,7 @@ export function RankedScene({ charId, character, active }: Props) {
   const myName = me ? players.get(me) : undefined;
   const ready = !!character.motor && !!character.decision;
 
-  const bracketView = (lt: LiveTournament, highlight: number | null) => {
+  const bracketView = (lt: LiveTournament, highlight: number | null, replayable: boolean) => {
     const rounds = lt.matches.length ? lt.matches[lt.matches.length - 1].round + 1 : 0;
     const shown = (m: LiveMatch) => matchSlotStart(lt.t, m.index) + introMs + (m.outcome?.time ?? BATTLE.timeLimit) * 1000 <= now;
     return (
@@ -455,7 +527,16 @@ export function RankedScene({ charId, character, active }: Props) {
               <b className={m.outcome && shown(m) && m.outcome.advance === 0 ? 'winner' : ''}>{label(m.a)}</b> vs{' '}
               <b className={m.outcome && shown(m) && m.outcome.advance === 1 ? 'winner' : ''}>{label(m.b)}</b>
             </span>
-            {m.outcome && shown(m) && <span className="muted small">{m.forfeit ? '不戦勝' : causeText(m.outcome)}</span>}
+            {m.outcome && shown(m) && (
+              <span className="muted small">
+                {m.forfeit ? '不戦勝' : causeText(m.outcome)}
+                {replayable && !m.forfeit && (
+                  <button className="small-button replay-button" onClick={() => void playReplay(lt, m)} disabled={replay?.m === m.index}>
+                    {replay?.m === m.index ? '再生中' : 'リプレイ'}
+                  </button>
+                )}
+              </span>
+            )}
           </li>
         ))}
       </ol>
@@ -464,8 +545,29 @@ export function RankedScene({ charId, character, active }: Props) {
 
   // 配信画面の上に重ねる表示
   let overlay: React.ReactNode = null;
+  const replayMatch = replay && cur && cur.t === replay.t ? cur.matches[replay.m] : null;
+  const replayEp = replayMatch ? (viewerRef.current?.currentEpisode as MatchEpisode | null) : null;
   if (fatal) overlay = <div className="live-card error">{fatal}</div>;
-  else if (!cur) overlay = <div className="live-card">トーナメントを準備しています…</div>;
+  else if (replayMatch && replayMatch.outcome) {
+    const o = replayMatch.outcome;
+    const time = replayEp?.time ?? 0;
+    overlay =
+      replayEp?.done || time >= o.time ? (
+        <div className="live-card result-card">
+          <div className="live-title">{o.winner === null ? '引き分け' : `${label(o.winner === 0 ? replayMatch.a : replayMatch.b)} の勝ち`}</div>
+          <div className="muted">
+            {causeText(o)}・{o.time.toFixed(1)}秒(リプレイ)
+          </div>
+        </div>
+      ) : (
+        <div className="battle-hud">
+          <div className="timer">{Math.max(0, BATTLE.timeLimit - time).toFixed(0)}</div>
+          <div style={{ color: hex(TEAM_COLORS[0]) }}>● {label(replayMatch.a)}</div>
+          <div style={{ color: hex(TEAM_COLORS[1]) }}>● {label(replayMatch.b)}</div>
+          <div className="safe">リプレイ</div>
+        </div>
+      );
+  } else if (!cur) overlay = <div className="live-card">トーナメントを準備しています…</div>;
   else if (cur.entrants.length < 2)
     overlay = (
       <div className="live-card">
@@ -617,11 +719,11 @@ export function RankedScene({ charId, character, active }: Props) {
               })}{' '}
               から
             </p>
-            {cur && cur.matches.length > 0 && bracketView(cur, slot)}
+            {cur && cur.matches.length > 0 && bracketView(cur, replay ? replay.m : slot, true)}
             {prev && prev.matches.length > 0 && (
               <>
                 <h3>前回のトーナメント</h3>
-                {bracketView(prev, null)}
+                {bracketView(prev, null, false)}
               </>
             )}
           </>
@@ -662,6 +764,16 @@ export function RankedScene({ charId, character, active }: Props) {
       </aside>
       <div className="viewport">
         <canvas ref={canvasRef} />
+        {replay && view !== 'ranking' && (
+          <div className="speed">
+            {([1, 4] as const).map((x) => (
+              <button key={x} className={replaySpeed === x ? 'selected' : ''} onClick={() => setReplaySpeed(x)}>
+                {x}倍
+              </button>
+            ))}
+            <button onClick={backToLive}>ライブに戻る</button>
+          </div>
+        )}
         {view === 'ranking' ? (
           <div className="ranked-board">
             <table>

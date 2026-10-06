@@ -10,6 +10,8 @@ import { MatchEpisode } from '../../core/sim/match';
 import * as api from '../../online/ranked';
 import { TEAM_COLORS } from '../../render/creatureMesh';
 import type { EpisodeViewer } from '../../render/EpisodeViewer';
+import { saveReplay } from '../../storage/db';
+import type { BattleRecord } from '../battle/BattleScene';
 
 interface Props {
   charId: string;
@@ -126,6 +128,16 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
       const oe = vs.find((x) => x.id === match.b);
       const opponent = oe ? `${oe.name}(${p.find((x) => x.id === oe.owner)?.name ?? '名無し'})` : '相手';
       setCurrent({ opponent, outcome, shown: false, before, after });
+      // マイキャラのリプレイに保存する
+      const record: BattleRecord = { seed: randomMatchSeed(match.id), names: [character.name, opponent], fighters: [fa, fb] };
+      const result = outcome.winner === null ? '引き分け' : outcome.winner === 0 ? '勝ち' : '負け';
+      await saveReplay({
+        id: `random:${match.id}`,
+        kind: 'random',
+        title: `ランダムマッチ:${character.name} vs ${opponent}(${result})`,
+        createdAt: Date.now(),
+        data: record,
+      });
       const ep = new MatchEpisode(R, { mode: 'battle', seed: randomMatchSeed(match.id), fighters: [fa, fb] });
       v.onFrame = (e) => {
         if ((e as MatchEpisode).done) setCurrent((c) => (c && !c.shown ? { ...c, shown: true } : c));
