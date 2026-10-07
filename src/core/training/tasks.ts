@@ -1,7 +1,7 @@
 // トレーニングメニューの一覧と評価(仕様書セクション9)。
 // 各メニューは、どちらの脳を鍛えるか・エピソードの作り方・合格判定を持つ。
 import type { Blueprint } from '../creature/blueprint';
-import { AVOID_TASK, CHASE_TASK, HOLES_TASK, JUMP_TASK, MOVE_TASK, PUSH_TASK, SURVIVE_TASK } from '../config';
+import { AVOID_TASK, CHASE_TASK, HOLES_TASK, JUMP_TASK, MOVE_TASK, PUSH_TASK, SURVIVE_TASK, type TrainStyle } from '../config';
 import type { Rapier } from '../physics/rapier';
 import { MatchEpisode } from '../sim/match';
 import { ChaseEpisode } from './chase';
@@ -31,6 +31,13 @@ export interface TaskSetup {
   level: number;
   /** 押し合いの相手 */
   opponent: FighterData | null;
+  /**
+   * 押し合いの相手の一覧(押し合いのみ):[突進BOT, 標準BOT, 過去の自分]。
+   * 学習ではエピソードごとに順番に替え、合格の確認では前半を突進BOT、後半を標準BOTと戦う
+   */
+  opponents?: FighterData[];
+  /** 作戦タイプ(押し合い・ライバル練習試合の報酬の重み) */
+  style?: TrainStyle;
 }
 
 export interface TaskDef {
@@ -41,7 +48,14 @@ export interface TaskDef {
   note: string;
   passCondition: string;
   /** 評価エピソードを作る。genome は鍛えている脳の遺伝子 */
-  createEpisode(R: Rapier, setup: TaskSetup, genome: Float64Array, seed: number, sector: Sector, mode: 'train' | 'confirm'): Episode & { run(): EpisodeOutcome };
+  createEpisode(
+    R: Rapier,
+    setup: TaskSetup,
+    genome: Float64Array,
+    seed: number,
+    sector: Sector,
+    mode: 'train' | 'confirm',
+  ): Episode & { run(): EpisodeOutcome };
   /** 合格の確認に使うエピソード数 */
   confirmEpisodes: number;
   passed(outcomes: readonly EpisodeOutcome[]): boolean;
@@ -50,6 +64,11 @@ export interface TaskDef {
 }
 
 const successCount = (o: readonly EpisodeOutcome[]) => o.filter((x) => x.success).length;
+/** 押し合いの合格の確認の勝ち数:[突進BOT(前半), 標準BOT(後半)] */
+const pushWins = (o: readonly EpisodeOutcome[]): [number, number] => [
+  successCount(o.slice(0, PUSH_TASK.confirmMatches)),
+  successCount(o.slice(PUSH_TASK.confirmMatches)),
+];
 const metricMean = (o: readonly EpisodeOutcome[]) => (o.length ? o.reduce((s, x) => s + x.metric, 0) / o.length : 0);
 
 export function needMotor(setup: TaskSetup): Float64Array {
@@ -143,19 +162,28 @@ export const TASKS: Record<TaskName, TaskDef> = {
     name: 'push',
     label: 'BOTとの押し合い',
     brain: 'decision',
-    note: '判断脳を鍛える。BOTと対戦する(突進BOT → 標準BOT)。押し出して勝つと高い得点',
-    passCondition: `標準BOTに勝率${(PUSH_TASK.confirmWins / PUSH_TASK.confirmMatches) * 100}%以上`,
+    note: '判断脳を鍛える。突進BOT・標準BOT・過去の自分と順番に対戦する。作戦タイプで、押し出し重視か生き残り重視かを選べる',
+    passCondition: `突進BOTと標準BOTに、それぞれ勝率${(PUSH_TASK.confirmWins / PUSH_TASK.confirmMatches) * 100}%以上(${PUSH_TASK.confirmMatches}戦${PUSH_TASK.confirmWins}勝)`,
     createEpisode: (R, setup, genome, seed, sector, mode) => {
       const self: FighterData = { blueprint: setup.blueprint, motor: needMotor(setup), decision: genome, controller: 'brain' };
+      const opps = setup.opponents?.length ? setup.opponents : setup.opponent ? [setup.opponent] : [];
       // 押すことに夢中で自分が落ちるキャラにならないよう、学習中は評価エピソードの最後の1つを単独の生き残りにする
-      if ((mode === 'train' && sector.index === sector.count - 1) || !setup.opponent) {
+      if ((mode === 'train' && sector.index === sector.count - 1) || opps.length === 0) {
         return new MatchEpisode(R, { mode: 'survive', seed, fighters: [self] });
       }
-      return new MatchEpisode(R, { mode: 'push', seed, fighters: [self, setup.opponent] });
+      // 合格の確認:前半は突進BOT、後半は標準BOT。学習:相手を順番に替える
+      const opponent =
+        mode === 'confirm'
+          ? opps[Math.min(opps.length - 1, Math.min(1, Math.floor(sector.index / PUSH_TASK.confirmMatches)))]
+          : opps[sector.index % opps.length];
+      return new MatchEpisode(R, { mode: 'push', seed, fighters: [self, opponent], style: setup.style });
     },
-    confirmEpisodes: PUSH_TASK.confirmMatches,
-    passed: (o) => successCount(o) >= PUSH_TASK.confirmWins,
-    describe: (o) => `${o.length}戦${successCount(o)}勝(${PUSH_TASK.confirmWins}勝で合格)`,
+    confirmEpisodes: PUSH_TASK.confirmMatches * 2,
+    passed: (o) => pushWins(o)[0] >= PUSH_TASK.confirmWins && pushWins(o)[1] >= PUSH_TASK.confirmWins,
+    describe: (o) => {
+      const [rush, std] = pushWins(o);
+      return `突進BOTに${PUSH_TASK.confirmMatches}戦${rush}勝・標準BOTに${PUSH_TASK.confirmMatches}戦${std}勝(それぞれ${PUSH_TASK.confirmWins}勝で合格)`;
+    },
   },
   rival: {
     name: 'rival',
@@ -168,7 +196,7 @@ export const TASKS: Record<TaskName, TaskDef> = {
       if ((mode === 'train' && sector.index === sector.count - 1) || !setup.opponent) {
         return new MatchEpisode(R, { mode: 'survive', seed, fighters: [self] });
       }
-      return new MatchEpisode(R, { mode: 'push', seed, fighters: [self, setup.opponent] });
+      return new MatchEpisode(R, { mode: 'push', seed, fighters: [self, setup.opponent], style: setup.style });
     },
     confirmEpisodes: PUSH_TASK.confirmMatches,
     passed: () => false,

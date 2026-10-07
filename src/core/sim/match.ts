@@ -3,7 +3,7 @@
 // 報酬はトレーニング用で、0番のキャラ(鍛えている側)から見た値。
 import { DecisionBrain, footing, rushCommand } from '../brain/decision';
 import type { MotorCommand } from '../brain/motor';
-import { AVOID_TASK, BATTLE, PHYSICS, PUSH_TASK, STAGE, SURVIVE_TASK } from '../config';
+import { AVOID_TASK, BATTLE, PHYSICS, PUSH_TASK, STAGE, STYLES, SURVIVE_TASK, type TrainStyle } from '../config';
 import { atan2 } from '../math/fmath';
 import { Rng } from '../math/rng';
 import type { Rapier } from '../physics/rapier';
@@ -26,6 +26,8 @@ export interface MatchOptions {
   pace?: number;
   /** 時間制限 [s](省略時はモードごとの既定値) */
   timeLimit?: number;
+  /** 作戦タイプ(押し合いの報酬の重み。省略時はバランス) */
+  style?: TrainStyle;
 }
 
 /** 脱落の原因:相手と接触した直後に落ちたら「押し出された」、そうでなければ「自分で落ちた」 */
@@ -64,7 +66,13 @@ export class MatchEpisode extends EpisodeBase {
     this.options = opts;
     this.timeLimit =
       opts.timeLimit ??
-      (opts.mode === 'battle' ? BATTLE.timeLimit : opts.mode === 'push' ? PUSH_TASK.timeLimit : opts.mode === 'avoid' ? AVOID_TASK.timeLimit : SURVIVE_TASK.timeLimit);
+      (opts.mode === 'battle'
+        ? BATTLE.timeLimit
+        : opts.mode === 'push'
+          ? PUSH_TASK.timeLimit
+          : opts.mode === 'avoid'
+            ? AVOID_TASK.timeLimit
+            : SURVIVE_TASK.timeLimit);
     const rng = new Rng(opts.seed);
     this.stage = new Stage(R, this.world, rng.nextU32(), {
       rules: true,
@@ -137,8 +145,9 @@ export class MatchEpisode extends EpisodeBase {
       if (me.out) this.reward -= AVOID_TASK.fallPenalty;
     } else if (this.options.mode === 'push') {
       // 押し出して勝つと大きく、相手の自滅で勝つと小さく加点。押し出されて負けると大きく減点
-      if (winner === 0) this.reward += this.causes[1] === 'pushed' ? PUSH_TASK.winPushBonus : PUSH_TASK.winFallBonus;
-      else if (winner === 1) this.reward -= this.causes[0] === 'pushed' ? PUSH_TASK.losePushedPenalty : PUSH_TASK.loseFellPenalty;
+      const st = STYLES[this.options.style ?? 'balanced'];
+      if (winner === 0) this.reward += this.causes[1] === 'pushed' ? PUSH_TASK.winPushBonus * st.winPush : PUSH_TASK.winFallBonus * st.winFall;
+      else if (winner === 1) this.reward -= this.causes[0] === 'pushed' ? PUSH_TASK.losePushedPenalty * st.losePushed : PUSH_TASK.loseFellPenalty * st.loseFell;
     }
     if (this.options.mode === 'battle' || this.options.mode === 'push') {
       this.success = winner === 0;
@@ -218,21 +227,23 @@ export class MatchEpisode extends EpisodeBase {
         if (d === 0) this.reward += SURVIVE_TASK.safeBonus * BRAIN_DT;
         else this.reward -= SURVIVE_TASK.dangerPenalty * BRAIN_DT;
       } else {
-        this.reward += PUSH_TASK.aliveBonus * BRAIN_DT;
+        const st = STYLES[this.options.style ?? 'balanced'];
+        this.reward += PUSH_TASK.aliveBonus * st.alive * BRAIN_DT;
+        if (st.danger > 0 && d !== 0) this.reward -= SURVIVE_TASK.dangerPenalty * st.danger * BRAIN_DT;
         const opp = this.fighters[1];
         if (opp && !opp.out) {
           const push = this.dangerOf(opp);
-          if (t > 0) this.reward += PUSH_TASK.pushWeight * (push - this.prevPush);
+          if (t > 0) this.reward += PUSH_TASK.pushWeight * st.push * (push - this.prevPush);
           this.prevPush = push;
           // 相手を追いかける:離れているときは近づいた距離、触れている間は時間で加点
           const a = me.position();
           const b = opp.position();
           const dist = Math.sqrt((a.x - b.x) ** 2 + (a.z - b.z) ** 2);
           if (this.prevOpponentDist !== null && dist > PUSH_TASK.approachRange) {
-            this.reward += PUSH_TASK.approachWeight * (this.prevOpponentDist - dist);
+            this.reward += PUSH_TASK.approachWeight * st.approach * (this.prevOpponentDist - dist);
           }
           this.prevOpponentDist = dist;
-          if (touchingNow) this.reward += PUSH_TASK.contactBonus * BRAIN_DT;
+          if (touchingNow) this.reward += PUSH_TASK.contactBonus * st.contact * BRAIN_DT;
         }
       }
     }

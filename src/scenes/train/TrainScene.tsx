@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createDecisionGenome } from '../../core/brain/decision';
 import { createMotorGenome } from '../../core/brain/motor';
 import type { Character } from '../../core/character';
-import { TRAINING } from '../../core/config';
+import { TRAINING, STYLES, type TrainStyle } from '../../core/config';
 import { actuatorCount } from '../../core/creature/blueprint';
 import { Rng } from '../../core/math/rng';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
@@ -69,7 +69,14 @@ interface ReplaySource {
 }
 
 function setupFor(c: Character, task: TaskName): TaskSetup {
-  return { blueprint: c.blueprint, motor: c.motor, decision: c.decision, level: task === 'survive' ? (c.progress.surviveLevel ?? 1) : 3, opponent: null };
+  return {
+    blueprint: c.blueprint,
+    motor: c.motor,
+    decision: c.decision,
+    level: task === 'survive' ? (c.progress.surviveLevel ?? 1) : 3,
+    opponent: null,
+    style: c.progress.style ?? 'balanced',
+  };
 }
 
 /** 鍛える脳が運動脳なら、setup の運動脳を遺伝子に差し替える */
@@ -83,7 +90,9 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
   const rapierRef = useRef<Rapier | null>(null);
   const trainerRef = useRef<Trainer | null>(null);
   const episodeRef = useRef<Episode | null>(null);
-  const [task, setTask] = useState<TaskName>(() => TASK_ORDER.find((t) => isUnlocked(t, character.progress.passed) && !character.progress.passed.includes(t)) ?? 'move');
+  const [task, setTask] = useState<TaskName>(
+    () => TASK_ORDER.find((t) => isUnlocked(t, character.progress.passed) && !character.progress.passed.includes(t)) ?? 'move',
+  );
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
   const [showGhosts, setShowGhosts] = useState(true);
@@ -248,7 +257,13 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
       if (document.hidden) {
         if (!trainerRef.current?.isRunning) return;
         const last = points[task]?.[points[task]!.length - 1];
-        awaySnapshot.current = { at: Date.now(), generations: gens, best: last?.best ?? null, milestones: [...(c.progress.milestones ?? [])], passed: [...c.progress.passed] };
+        awaySnapshot.current = {
+          at: Date.now(),
+          generations: gens,
+          best: last?.best ?? null,
+          milestones: [...(c.progress.milestones ?? [])],
+          passed: [...c.progress.passed],
+        };
       } else if (awaySnapshot.current) {
         const s = awaySnapshot.current;
         awaySnapshot.current = null;
@@ -347,7 +362,10 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
     for (const k of fresh) {
       const m = r.moments[k]!;
       const title = `${MILESTONE_LABELS[k]}(${c.name}・${d.label} 第${generation + 1}世代)`;
-      setToasts((ts) => [...ts, { id: Date.now() + Math.random(), title: MILESTONE_LABELS[k], detail: `${d.label} 第${generation + 1}世代。リプレイを保存しました` }]);
+      setToasts((ts) => [
+        ...ts,
+        { id: Date.now() + Math.random(), title: MILESTONE_LABELS[k], detail: `${d.label} 第${generation + 1}世代。リプレイを保存しました` },
+      ]);
       const data: TrainReplay = { type: 'train', task: t, setup: withGenome(r.setup, t, m.genome), genome: m.genome, seed: m.seed, sector: m.sector, title };
       void saveReplay({ id: newId(), kind: 'milestone', title, createdAt: Date.now(), data });
     }
@@ -444,6 +462,26 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
           <div className={`badge ${passed ? 'ok' : ''}`}>{passed ? '合格' : `合格条件:${def.passCondition}`}</div>
         </div>
 
+        {(task === 'push' || task === 'rival') && (
+          <>
+            <h3>作戦タイプ</h3>
+            <div className="segmented wrap">
+              {(Object.keys(STYLES) as TrainStyle[]).map((st) => (
+                <button
+                  key={st}
+                  className={(character.progress.style ?? 'balanced') === st ? 'selected' : ''}
+                  disabled={running}
+                  title={STYLES[st].note}
+                  onClick={() => onChange((c) => ({ ...c, progress: { ...c.progress, style: st === 'balanced' ? undefined : st } }))}
+                >
+                  {STYLES[st].label}
+                </button>
+              ))}
+            </div>
+            <p className="muted small">{STYLES[character.progress.style ?? 'balanced'].note}(学習を止めているときに切り替えられます)</p>
+          </>
+        )}
+
         <label className="inline-field" title="多いほど1世代に時間がかかるが、上達しやすい">
           個体数
           <select value={population} disabled={running} onChange={(e) => setPopulation(Number(e.target.value))}>
@@ -462,7 +500,11 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
               {generations > 0 ? '学習を再開' : '学習開始'}
             </button>
           )}
-          <button onClick={() => setComparing(true)} disabled={!firstChampions[task] || sessionReports.length < 2} title="第1世代と最新世代を同じシードで並べて再生します">
+          <button
+            onClick={() => setComparing(true)}
+            disabled={!firstChampions[task] || sessionReports.length < 2}
+            title="第1世代と最新世代を同じシードで並べて再生します"
+          >
             比較リプレイ
           </button>
         </div>

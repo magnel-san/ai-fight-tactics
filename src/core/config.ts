@@ -286,7 +286,10 @@ export const PUSH_TASK = {
   /** 相手を危険な場所へ近づけた量にかける重み */
   pushWeight: 2,
   aliveBonus: 0.2,
-  /** 合格の確認の試合数と、必要な勝ち数(勝率30%。合格しやすくするため6勝から半分にした) */
+  /**
+   * 合格の確認:突進BOTと標準BOTのそれぞれと confirmMatches 試合ずつ戦い、どちらにも confirmWins 勝以上(勝率30%)。
+   * 以前は標準BOTだけだったので、突進BOTに勝てなくても合格できていた
+   */
   confirmMatches: 10,
   confirmWins: 3,
 } as const;
@@ -451,4 +454,73 @@ export const TRAINING = {
   workersMax: 8,
   /** σ の下限(小さくなりすぎて進化が止まるのを防ぐ) */
   sigmaMin: 0.02,
+  /**
+   * 判断脳のメニューは試合の運に左右されやすいので、1世代の評価を多めにし(decisionEpisodesPerGeneration)、
+   * さらに上位 reevalTop 個体だけ reevalEpisodes 試合を追加して、合わせた平均で選び直す
+   */
+  decisionEpisodesPerGeneration: 5,
+  reevalTop: 4,
+  reevalEpisodes: 5,
+  /** 押し合いの自己対戦:この世代数ごとに、その時点の最優秀の判断脳を「過去の自分」として相手に加える */
+  selfPlayInterval: 20,
 } as const;
+
+/** 作戦タイプ(押し合い・ライバル練習試合の報酬の重み)。数値は PUSH_TASK の各報酬にかける倍率 */
+export type TrainStyle = 'balanced' | 'attack' | 'survive';
+export const STYLES: Record<
+  TrainStyle,
+  {
+    label: string;
+    note: string;
+    winPush: number;
+    winFall: number;
+    losePushed: number;
+    loseFell: number;
+    approach: number;
+    contact: number;
+    push: number;
+    alive: number;
+    /** 自分が危険なタイルの上にいる間の減点 [/s](生き残りと同じ考え方) */
+    danger: number;
+  }
+> = {
+  balanced: {
+    label: 'バランス',
+    note: '押し出しと生き残りを両方ほどほどに評価する(これまでと同じ)',
+    winPush: 1,
+    winFall: 1,
+    losePushed: 1,
+    loseFell: 1,
+    approach: 1,
+    contact: 1,
+    push: 1,
+    alive: 1,
+    danger: 0,
+  },
+  attack: {
+    label: '攻め(押し出し重視)',
+    note: '押し出して勝つことを高く評価する。相手に近づき、触れて、崖へ押し込む動きを覚えやすい',
+    winPush: 2.5,
+    winFall: 1,
+    losePushed: 1,
+    loseFell: 1,
+    approach: 2,
+    contact: 2,
+    push: 1.5,
+    alive: 1,
+    danger: 0,
+  },
+  survive: {
+    label: '守り(生き残り重視)',
+    note: '生き残ることを高く評価する。危ないタイルを避け、自滅しない動きを覚えやすい',
+    winPush: 1,
+    winFall: 1,
+    losePushed: 1.5,
+    loseFell: 2,
+    approach: 0.5,
+    contact: 0.5,
+    push: 1,
+    alive: 5,
+    danger: 1,
+  },
+};

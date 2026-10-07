@@ -61,6 +61,20 @@ export class Trainer {
   /** 押し合いの相手の段階(opponents の番号) */
   private opponentIndex = 0;
   private passed: boolean;
+  /** 押し合いの「過去の自分」(自己対戦の相手) */
+  private selfSnapshot: Float64Array | null = null;
+  /** 直前の世代の最優秀個体 */
+  private lastChampion: Float64Array | null = null;
+
+  /** 押し合いの相手の一覧を作り直す:[突進BOT, 標準BOT, 過去の自分] */
+  private updateOpponents(): void {
+    const bots = this.opponents.slice(0, 2).map((o) => o.data);
+    const self: FighterData[] =
+      this.selfSnapshot && this.setup.motor
+        ? [{ blueprint: this.setup.blueprint, motor: this.setup.motor, decision: this.selfSnapshot, controller: 'brain' }]
+        : [];
+    this.setup.opponents = [...bots, ...self];
+  }
 
   constructor(
     private task: TaskName,
@@ -85,6 +99,11 @@ export class Trainer {
     if (task === 'push' || task === 'rival') {
       if (opponents.length === 0) throw new Error(task === 'push' ? '押し合いの相手がいません' : '対戦相手プールにキャラを登録してください');
       this.setup.opponent = opponents[0].data;
+    }
+    if (task === 'push') {
+      // 押し合い:突進BOT・標準BOTに、過去の自分(最初は今の判断脳)を加えて、順番に戦う
+      this.selfSnapshot = Float64Array.from(initialGenome);
+      this.updateOpponents();
     }
   }
 
@@ -113,7 +132,12 @@ export class Trainer {
 
   private stageLabel(): string {
     if (this.task === 'survive') return `レベル${this.setup.level}`;
-    if (this.task === 'push' || this.task === 'rival') return `相手:${this.opponents[this.opponentIndex].label}`;
+    if (this.task === 'push')
+      return `相手:${this.opponents
+        .slice(0, 2)
+        .map((o) => o.label)
+        .join('・')}・過去の自分`;
+    if (this.task === 'rival') return `相手:${this.opponents[this.opponentIndex].label}`;
     return '';
   }
 
@@ -131,15 +155,8 @@ export class Trainer {
       if (level < SURVIVE_TASK.levelPace.length) this.setup.level = level + 1;
       return level >= SURVIVE_TASK.passLevel;
     }
-    if (this.task === 'push') {
-      const last = this.opponentIndex === this.opponents.length - 1;
-      const target = this.opponents[this.opponentIndex].passTarget ?? last;
-      if (!last) {
-        this.opponentIndex++;
-        this.setup.opponent = this.opponents[this.opponentIndex].data;
-      }
-      return target || this.passed;
-    }
+    // 押し合い:突進BOTと標準BOTのどちらにも勝てたら合格(確認で両方と戦っている)
+    if (this.task === 'push') return true;
     return true;
   }
 
@@ -152,17 +169,41 @@ export class Trainer {
         this.opponentIndex = this.ga.generation % this.opponents.length;
         this.setup.opponent = this.opponents[this.opponentIndex].data;
       }
-      const seeds = Array.from({ length: TRAINING.episodesPerGeneration }, () => this.rng.nextU32());
+      // 自己対戦:一定の世代ごとに、いまの最優秀を「過去の自分」として相手に入れる
+      if (this.task === 'push' && this.ga.generation > 0 && this.ga.generation % TRAINING.selfPlayInterval === 0 && this.lastChampion) {
+        this.selfSnapshot = Float64Array.from(this.lastChampion);
+        this.updateOpponents();
+      }
+      const decisionTask = task.brain === 'decision';
+      const episodes = decisionTask ? TRAINING.decisionEpisodesPerGeneration : TRAINING.episodesPerGeneration;
+      const seeds = Array.from({ length: episodes }, () => this.rng.nextU32());
       const setup = { ...this.setup };
       const stageLabel = this.stageLabel();
       const population = this.ga.population.map((g) => Float64Array.from(g));
       try {
         const results = await this.pool.evaluate(this.task, setup, population, seeds);
         if (!this.running) return;
-        const order = [...results.keys()].sort((a, b) => results[b].fitness - results[a].fitness || a - b);
-        const stats = this.ga.tell(results.map((r) => r.fitness));
+        const fitness = results.map((r) => r.fitness);
+        // 判断脳のメニュー:上位の個体だけ試合を追加して、合わせた平均で選び直す(運のよい個体が選ばれにくくする)
+        if (decisionTask && TRAINING.reevalTop > 0) {
+          const top = [...fitness.keys()].sort((a, b) => fitness[b] - fitness[a] || a - b).slice(0, TRAINING.reevalTop);
+          const extraSeeds = Array.from({ length: TRAINING.reevalEpisodes }, () => this.rng.nextU32());
+          const extra = await this.pool.evaluate(
+            this.task,
+            setup,
+            top.map((i) => population[i]),
+            extraSeeds,
+          );
+          if (!this.running) return;
+          top.forEach((i, k) => {
+            fitness[i] = (fitness[i] * seeds.length + extra[k].fitness * extraSeeds.length) / (seeds.length + extraSeeds.length);
+          });
+        }
+        const order = [...fitness.keys()].sort((a, b) => fitness[b] - fitness[a] || a - b);
+        const stats = this.ga.tell(fitness);
         const best = results[stats.bestIndex];
         const champion = population[stats.bestIndex];
+        this.lastChampion = champion;
         const flags = { ...best.flags };
         for (const r of results) for (const k of Object.keys(flags) as (keyof EpisodeFlags)[]) flags[k] ||= r.flags[k];
         const moments: GenerationReport['moments'] = {};

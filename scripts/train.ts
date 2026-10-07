@@ -90,7 +90,7 @@ await new Promise<void>((resolve, reject) => {
       const elapsed = (performance.now() - start) / 1000;
       console.log(
         `世代${String(gens).padStart(4)}  最高 ${r.best.toFixed(2).padStart(7)}  平均 ${r.mean.toFixed(2).padStart(7)}  ` +
-          `成功 ${r.bestResult.successCount}/3  ${r.stageLabel}  σ ${r.sigma.toFixed(3)}  ${r.seconds.toFixed(1)}s/世代  累計 ${elapsed.toFixed(0)}s` +
+          `成功 ${r.bestResult.successCount}/${r.seeds.length}  ${r.stageLabel}  σ ${r.sigma.toFixed(3)}  ${r.seconds.toFixed(1)}s/世代  累計 ${elapsed.toFixed(0)}s` +
           (r.confirm ? `\n  → 確認:${r.confirm.text} ${r.confirm.passed ? '通過' : ''}` : ''),
       );
       if (r.confirm?.passed || gens % 10 === 0) save();
