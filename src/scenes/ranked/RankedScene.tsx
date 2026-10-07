@@ -3,9 +3,10 @@
 // 試合は Worker で計算して結果を報告し、配信はメインスレッドで同じ試合を再現して、時刻に合わせて途中から映す。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { canEnter, type Character } from '../../core/character';
-import { BATTLE, PHYSICS, RACE, RANKED } from '../../core/config';
+import { BATTLE, PHYSICS, RACE, RANKED, TRACK } from '../../core/config';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import type { RaceRecord } from '../../core/ranked/run';
+import { trackRecordKey } from '../../core/events/track';
 import {
   bracketFor,
   computeStats,
@@ -58,7 +59,7 @@ interface LiveTournament {
 export type RankedView = 'live' | 'ranking' | 'entry';
 type View = RankedView;
 const VIEW_TITLES: Record<View, string> = { live: 'トーナメント配信', ranking: 'ランキング', entry: '出場登録' };
-type SortKey = 'rating' | 'wins' | 'race' | 'jump';
+type SortKey = 'rating' | 'wins' | 'race' | 'track' | 'jump';
 /** ランキングの部門:トーナメントとランダムマッチ(レートは別々) */
 type Division = 'tournament' | 'random';
 
@@ -480,7 +481,9 @@ export function RankedScene({ charId, character, active, view }: Props) {
         ? y.wins - x.wins || y.rating - x.rating
         : sortKey === 'jump'
           ? (y.race?.jump ?? -1) - (x.race?.jump ?? -1)
-          : raceKey(x.race) - raceKey(y.race),
+          : sortKey === 'track'
+            ? (x.race ? trackRecordKey(x.race.track) : Infinity) - (y.race ? trackRecordKey(y.race.track) : Infinity)
+            : raceKey(x.race) - raceKey(y.race),
   );
   const raceIds = rows.map((r) => r.entryId).join(',');
 
@@ -492,8 +495,8 @@ export function RankedScene({ charId, character, active, view }: Props) {
       for (const id of raceIds.split(',').map(Number)) {
         if (cancelled) return;
         if (races.has(id)) continue;
-        // ジャンプの記録を足したので、保存のキーを変えて測り直す
-        const key = `ranked-race2:${id}`;
+        // 長距離の記録を足したので、保存のキーを変えて測り直す
+        const key = `ranked-race3:${id}`;
         let rec = await getSetting<RaceRecord>(key);
         if (!rec) {
           const f = (await api.entryFighters([id])).get(id);
@@ -791,7 +794,8 @@ export function RankedScene({ charId, character, active, view }: Props) {
               {division === 'tournament'
                 ? '自動トーナメントのレートです。記録はモンスターごとに残り、出場するモンスターを替えても前のモンスターの記録は消えません(★ = いま出場中)。'
                 : '種目の画面の「ランダムマッチ」のレートです(トーナメントとは別)。同じ2体は1回だけ戦えます。'}
-              レートは {RANKED.initialRating} から始まります。かけっこは {RACE.distance}m の公式記録(決まった{RANKED.raceSeeds.length}回の最速)です。
+              レートは {RANKED.initialRating} から始まります。かけっこは {RACE.distance}m の公式記録(決まった{RANKED.raceSeeds.length}
+              回の最速)、長距離はトラック{TRACK.laps}周の公式記録(ゴールできなければ通ったチェックポイントの数)です。
             </p>
             <div className="segmented">
               {(
@@ -799,6 +803,7 @@ export function RankedScene({ charId, character, active, view }: Props) {
                   ['rating', 'レート'],
                   ['wins', '勝利数'],
                   ['race', 'かけっこ'],
+                  ['track', '長距離'],
                   ['jump', 'ジャンプ'],
                 ] as const
               ).map(([k, l]) => (
@@ -840,13 +845,14 @@ export function RankedScene({ charId, character, active, view }: Props) {
                   <th>勝利数</th>
                   <th>成績</th>
                   <th>かけっこ</th>
+                  <th>長距離</th>
                   <th>ジャンプ</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="muted">
+                    <td colSpan={9} className="muted">
                       {division === 'tournament' ? 'まだ登録がありません' : 'まだ試合がありません'}
                     </td>
                   </tr>
@@ -871,6 +877,19 @@ export function RankedScene({ charId, character, active, view }: Props) {
                           `${r.race.best.toFixed(2)}秒`
                         ) : (
                           `${r.race.distance.toFixed(1)}m`
+                        )
+                      ) : (
+                        <span className="muted">計測中…</span>
+                      )}
+                    </td>
+                    <td>
+                      {r.race ? (
+                        r.race.track.time !== null ? (
+                          `${r.race.track.time.toFixed(1)}秒`
+                        ) : (
+                          <span className="muted">
+                            {r.race.track.passed}/{TRACK.laps * TRACK.checkpoints}
+                          </span>
                         )
                       ) : (
                         <span className="muted">計測中…</span>

@@ -212,9 +212,11 @@ describe('ランクマッチの試合とかけっこの記録', () => {
     if (a.winner !== null) expect(a.advance).toBe(a.winner);
   }, 60_000);
 
-  it('かけっこの記録は何度測っても同じ', () => {
+  it('かけっこ・ジャンプ・長距離の記録は何度測っても同じ', () => {
     const r = raceRecord(R, fighter(3));
     expect(raceRecord(R, fighter(3))).toEqual(r);
     expect(r.distance).toBeGreaterThanOrEqual(0);
-  }, 60_000);
+    expect(r.track.passed).toBeGreaterThanOrEqual(0);
+    expect(r.track.time === null || r.track.passed === 24).toBe(true);
+  }, 120_000);
 });

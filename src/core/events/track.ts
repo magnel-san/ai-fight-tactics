@@ -164,6 +164,26 @@ export class TrackEpisode extends EpisodeBase {
   }
 }
 
+/** ランキングの長距離の公式記録:ゴールのタイム、ゴールできなければ通ったチェックポイントの数 */
+export interface TrackRecord {
+  time: number | null;
+  passed: number;
+}
+
+/** 長距離の公式記録:決まったシードで1体だけ3周を走らせる */
+export function trackRecord(R: Rapier, f: FighterData): TrackRecord {
+  const ep = new TrackEpisode(R, [f], TRACK.recordSeed);
+  ep.run();
+  const r = ep.result();
+  ep.free();
+  return { time: r.finishAt[0], passed: r.passed[0] };
+}
+
+/** 長距離の記録の並べ方(小さいほど上):ゴールしたらタイム、しなければ制限時間+残りのチェックポイント数 */
+export function trackRecordKey(r: TrackRecord): number {
+  return r.time !== null ? r.time : TRACK.timeLimit + (TRACK.laps * TRACK.checkpoints - r.passed);
+}
+
 /** トラックの見た目:地面・トラック(板を並べる)・チェックポイントの柱(スタート・ゴールは黄色) */
 function trackBoxes(): EpisodeProps['boxes'] {
   const boxes: EpisodeProps['boxes'] = [];

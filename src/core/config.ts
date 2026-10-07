@@ -444,6 +444,8 @@ export const TRACK = {
   lapBonus: 10,
   confirmEpisodes: 3,
   confirmPassCount: 2,
+  /** ランキングの長距離の公式記録を測るシード(1体だけで3周を走らせる) */
+  recordSeed: 404,
 } as const;
 
 /** 種目「ジャンプ」:決まった間隔でジャンプ指令を出し、コアがどれだけ高く上がったかの最高記録を競う */

@@ -2,6 +2,7 @@
 import { RANKED } from '../config';
 import { jumpRecord } from '../events/highjump';
 import { RaceEpisode } from '../events/race';
+import { trackRecord, type TrackRecord } from '../events/track';
 import type { Rapier } from '../physics/rapier';
 import { MatchEpisode } from '../sim/match';
 import type { FighterData } from '../training/tasks';
@@ -23,9 +24,11 @@ export interface RaceRecord {
   distance: number;
   /** ジャンプの公式記録:いちばん高く跳んだ上がり幅 [m] */
   jump: number;
+  /** 長距離(トラック3周)の公式記録 */
+  track: TrackRecord;
 }
 
-/** かけっことジャンプの公式記録:決まったシードで1体ずつ走らせ(跳ばせ)、最速のタイム・最高の高さを記録にする */
+/** かけっこ・ジャンプ・長距離の公式記録:決まったシードで1体ずつ走らせ(跳ばせ)、最速のタイム・最高の高さを記録にする */
 export function raceRecord(R: Rapier, c: FighterData): RaceRecord {
   let best: number | null = null;
   let distance = 0;
@@ -38,5 +41,5 @@ export function raceRecord(R: Rapier, c: FighterData): RaceRecord {
     if (t !== null && (best === null || t < best)) best = t;
     distance = Math.max(distance, r.distance[0]);
   }
-  return { best, distance, jump: jumpRecord(R, c) };
+  return { best, distance, jump: jumpRecord(R, c), track: trackRecord(R, c) };
 }
