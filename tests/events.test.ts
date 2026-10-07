@@ -1,7 +1,8 @@
 // 種目(かけっこ・サッカー)のテスト
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createMotorGenome, motorGenomeLength } from '../src/core/brain/motor';
-import { HIGH_JUMP, RACE, SOCCER } from '../src/core/config';
+import { HIGH_JUMP, RACE, SOCCER, TRACK } from '../src/core/config';
+import { CHECKPOINTS, TrackEpisode, TRACK_LENGTH, trackPoint } from '../src/core/events/track';
 import { createSoccerGenome, SoccerBrain } from '../src/core/brain/soccer';
 import { HighJumpEpisode } from '../src/core/events/highjump';
 import { Fighter } from '../src/core/sim/fighter';
@@ -161,4 +162,44 @@ describe('サッカーのトレーニング・かけっこのトレーニング�
     expect(a.best[0]).toBe(Math.max(...a.heights[0]));
     expect(run()).toEqual(a);
   }, 60_000);
+});
+
+describe('長距離(トラック)', () => {
+  it('チェックポイントは順番どおりにしか数えない(近道しても先のチェックポイントは取れない)', () => {
+    const ep = new TrackEpisode(R, [runner(null)], 1);
+    const core = ep.fighters[0].core;
+    const put = (k: number) => {
+      const c = CHECKPOINTS[k];
+      core.setTranslation({ x: c.x, y: 0.5, z: c.z }, true);
+      core.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      for (let i = 0; i < 3; i++) ep.advance();
+    };
+    // 3つ先のチェックポイントへ近道しても数えない
+    put(3);
+    expect(ep.result().passed[0]).toBe(0);
+    // 順番どおりなら数える
+    put(0);
+    put(1);
+    expect(ep.result().passed[0]).toBe(2);
+    expect(ep.nextCheckpoint(0)).toBe(2);
+    ep.free();
+  });
+
+  it('トラックの中心線は1周でつながっている', () => {
+    const a = trackPoint(0);
+    const b = trackPoint(TRACK_LENGTH - 1e-6);
+    expect(Math.abs(a.x - b.x) + Math.abs(a.z - b.z)).toBeLessThan(1e-3);
+    expect(CHECKPOINTS.length).toBe(TRACK.checkpoints);
+  });
+
+  it('同じシードなら同じ結果になる', () => {
+    const run = () => {
+      const ep = new TrackEpisode(R, [runner(1), runner(2)], 5, { laps: 1, training: true });
+      const o = ep.run();
+      const r = ep.result();
+      ep.free();
+      return { o, r };
+    };
+    expect(run()).toEqual(run());
+  }, 120_000);
 });

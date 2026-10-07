@@ -2,7 +2,7 @@
 // 数値は config.ts などから読むので、調整しても説明がずれない。
 import type { Character } from '../../core/character';
 import { ENTRY_REQUIRED_TASK } from '../../core/character';
-import { BATTLE, BLOCK_OPTIONS, BLOCKS, CREATURE, RACE, RANKED, SOCCER, STAGE } from '../../core/config';
+import { BATTLE, BLOCK_OPTIONS, BLOCKS, CREATURE, RACE, RANKED, SOCCER, STAGE, TRACK } from '../../core/config';
 import { BRAIN_LABELS } from '../../core/training/brains';
 import { OPTIONAL_TASKS, TASK_ORDER, TASKS } from '../../core/training/tasks';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
@@ -193,9 +193,15 @@ export function GuideScene({ character, onGo }: Props) {
             {STAGE.randomStart}秒後からランダムに崩れる。崩れる前のタイルは赤く光ります
           </li>
           <li>
-            <b>かけっこ</b>:{RACE.distance}m 先のゴールまでのタイムを競います(最大4体)。<b>ジャンプ</b>:合図に合わせて跳び、いちばん高い記録を競います。
+            <b>かけっこ</b>:{RACE.distance}m 先のゴールまでのタイムを競います(最大4体)。
+            <b>長距離</b>:楕円のトラックを{TRACK.laps}周します。1周に{TRACK.checkpoints}個あるチェックポイントを順番どおりに全部通らないと周回になりません。
+            <b>ジャンプ</b>:合図に合わせて跳び、いちばん高い記録を競います。
             <b>サッカー</b>:{SOCCER.teamSize}対{SOCCER.teamSize}で、ボールをゴールに押し込みます。選手ごとに役割(シューター・キャリアー・ブロッカー)を選び、
             トレーニングでその役割のサッカー脳を鍛えると、お手本の動きより上手になります
+          </li>
+          <li>
+            観戦画面の右上の<b>「AIの考え」</b>をオンにすると、判断脳が見ているタイル(目)と、進みたい向き(矢印)が出ます。
+            ジャンプボタンを押している間は、キャラの上に黄色の「JUMP」が出ます
           </li>
           <li>
             <b>ランダムマッチ</b>:オンラインで、まだ戦っていない相手と自動で1対1。結果はランダムマッチのレートに反映されます(同じ相手とは1回だけ)

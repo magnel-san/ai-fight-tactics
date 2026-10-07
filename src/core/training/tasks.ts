@@ -1,7 +1,21 @@
 // トレーニングメニューの一覧と評価(仕様書セクション9)。
 // 各メニューは、どちらの脳を鍛えるか・エピソードの作り方・合格判定を持つ。
 import type { Blueprint } from '../creature/blueprint';
-import { AVOID_TASK, CHASE_TASK, HOLES_TASK, JUMP_TASK, MOVE_TASK, PUSH_TASK, RACE, SOCCER_DRILL, SPRINT_TASK, SURVIVE_TASK, type SoccerRole, type TrainStyle } from '../config';
+import {
+  AVOID_TASK,
+  CHASE_TASK,
+  HOLES_TASK,
+  JUMP_TASK,
+  MOVE_TASK,
+  PUSH_TASK,
+  RACE,
+  SOCCER_DRILL,
+  SPRINT_TASK,
+  SURVIVE_TASK,
+  TRACK,
+  type SoccerRole,
+  type TrainStyle,
+} from '../config';
 import type { Rapier } from '../physics/rapier';
 import { MatchEpisode } from '../sim/match';
 import { ChaseEpisode } from './chase';
@@ -11,8 +25,9 @@ import { JumpEpisode } from './jump';
 import { MoveEpisode, type Sector } from './move';
 import { SoccerDrillEpisode } from './soccerDrill';
 import { SprintEpisode } from './sprint';
+import { TrackEpisode, TRACK_LENGTH } from '../events/track';
 
-export type TaskName = 'move' | 'chase' | 'jump' | 'holes' | 'avoid' | 'survive' | 'push' | 'rival' | 'sprint' | 'shooter' | 'carrier' | 'blocker';
+export type TaskName = 'move' | 'chase' | 'jump' | 'holes' | 'avoid' | 'survive' | 'push' | 'rival' | 'sprint' | 'marathon' | 'shooter' | 'carrier' | 'blocker';
 /** 鍛える脳:運動脳・判断脳・サッカー脳(役割ごと) */
 export type BrainKind = 'motor' | 'decision' | 'soccer';
 
@@ -207,6 +222,18 @@ export const TASKS: Record<TaskName, TaskDef> = {
     passed: (o) => successCount(o) >= SPRINT_TASK.confirmPassCount,
     describe: (o) => `${successCount(o)} / ${o.length} 回、${SPRINT_TASK.passTime}秒以内(最速 ${Math.min(...o.map((x) => x.metric)).toFixed(1)}秒)`,
   },
+  marathon: {
+    name: 'marathon',
+    label: '長距離(トラック)',
+    brain: 'motor',
+    note: '運動脳を鍛える。かけっこの発展。楕円のトラックを1周する。チェックポイントを順番どおりに全部通らないと周回にならない(曲がりながら速く走る練習)',
+    passCondition: `${TRACK.confirmEpisodes}回中${TRACK.confirmPassCount}回、1周(約${Math.round(TRACK_LENGTH)}m・チェックポイント${TRACK.checkpoints}個)を${TRACK.passLapTime}秒以内`,
+    createEpisode: (R, setup, genome, seed) =>
+      new TrackEpisode(R, [{ blueprint: setup.blueprint, motor: genome, decision: null, controller: 'rush' }], seed, { laps: 1, training: true }),
+    confirmEpisodes: TRACK.confirmEpisodes,
+    passed: (o) => successCount(o) >= TRACK.confirmPassCount,
+    describe: (o) => `${successCount(o)} / ${o.length} 回、${TRACK.passLapTime}秒以内(最速 ${Math.min(...o.map((x) => x.metric)).toFixed(1)}秒)`,
+  },
   shooter: {
     name: 'shooter',
     label: 'サッカー:シューター',
@@ -312,10 +339,24 @@ export function levelPace(level: number): number {
  * メニューの解放順(仕様書セクション9)。運動脳:移動 → 追跡 →(ジャンプ・穴をまたぐ は任意)、
  * 判断脳:危険なタイルを避ける → 生き残り → BOTとの押し合い → ライバル練習試合
  */
-export const TASK_ORDER: readonly TaskName[] = ['move', 'chase', 'jump', 'holes', 'avoid', 'survive', 'push', 'rival', 'sprint', 'shooter', 'carrier', 'blocker'];
+export const TASK_ORDER: readonly TaskName[] = [
+  'move',
+  'chase',
+  'jump',
+  'holes',
+  'avoid',
+  'survive',
+  'push',
+  'rival',
+  'sprint',
+  'marathon',
+  'shooter',
+  'carrier',
+  'blocker',
+];
 
 /** 任意のメニュー(合格しなくても先に進める) */
-export const OPTIONAL_TASKS: readonly TaskName[] = ['jump', 'holes', 'rival', 'sprint', 'shooter', 'carrier', 'blocker'];
+export const OPTIONAL_TASKS: readonly TaskName[] = ['jump', 'holes', 'rival', 'sprint', 'marathon', 'shooter', 'carrier', 'blocker'];
 
 export function isUnlocked(task: TaskName, passed: readonly TaskName[]): boolean {
   // 一度合格したメニューは、あとから前提のメニューが増えても開いたままにする
@@ -339,5 +380,7 @@ export function isUnlocked(task: TaskName, passed: readonly TaskName[]): boolean
       return passed.includes('survive');
     case 'rival':
       return passed.includes('push');
+    case 'marathon':
+      return passed.includes('sprint');
   }
 }

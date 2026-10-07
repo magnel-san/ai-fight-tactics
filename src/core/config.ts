@@ -422,6 +422,30 @@ export const SPRINT_TASK = {
   confirmPassCount: 2,
 } as const;
 
+/**
+ * 種目「長距離」(かけっこの発展):楕円のトラックを laps 周する。トラックには1周あたり checkpoints 個のチェックポイントがあり、
+ * 順番どおりに全部通らないと周回にならない(内側を横切って近道しても、取っていないチェックポイントは数えない)。
+ * トラックは、長さ straight [m] のまっすぐな部分2本と、半径 radius [m] の半円2つ。幅 width [m]
+ */
+export const TRACK = {
+  straight: 8,
+  radius: 4,
+  width: 4,
+  checkpoints: 8,
+  /** チェックポイントを通ったとみなす、トラックの中心線からの距離 [m] */
+  checkpointRadius: 2.2,
+  laps: 3,
+  timeLimit: 300,
+  maxRunners: 4,
+  /** トレーニング「長距離」:1周を lapTimeLimit 秒まで。passLapTime 秒以内の1周が confirmEpisodes 回中 confirmPassCount 回で合格 */
+  lapTimeLimit: 120,
+  passLapTime: 100,
+  checkpointBonus: 3,
+  lapBonus: 10,
+  confirmEpisodes: 3,
+  confirmPassCount: 2,
+} as const;
+
 /** 種目「ジャンプ」:決まった間隔でジャンプ指令を出し、コアがどれだけ高く上がったかの最高記録を競う */
 export const HIGH_JUMP = {
   /** 1人あたりのジャンプの回数・最初の指令の時刻 [s]・間隔 [s]・1回を測る時間 [s] */

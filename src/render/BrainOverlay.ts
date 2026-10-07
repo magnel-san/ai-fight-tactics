@@ -1,5 +1,6 @@
 // 「AIの考え」の表示:判断脳が目で見ているタイル(危ないと見ている場所)と、進みたい向きの矢印を、試合の上に重ねる。
 // 判断脳のない場面(運動脳のトレーニング)では、運動脳に出している指令(進む向き)の矢印だけを出す。
+// ジャンプの指令(ジャンプボタン)を出している間は、キャラの上に黄色の上向き矢印と「JUMP」を出す。
 //   ・目の61マス:安全なら小さな白い点、危険マークならオレンジ〜赤、穴(崩れた場所)なら紫
 //   ・矢印:判断脳が運動脳に出した指令(進む向きと速さ)。長いほど速く進みたい
 // 判断脳の入力(DecisionBrain.input)をそのまま読むので、AIが実際に見ている値と同じになる。
@@ -21,6 +22,27 @@ const SAFE = new THREE.Color(0xffffff);
 const WARN = new THREE.Color(0xffa726);
 const DANGER = new THREE.Color(0xff3b3b);
 const HOLE = new THREE.Color(0x9b59ff);
+/** 矢印を出すキャラの数(サッカーの6人まで)。目は試合の2体だけ */
+const MAX_FIGHTERS = 6;
+const ARROW_COLORS = [...TEAM_COLORS, 0x6fcf97, 0xf2c94c, 0xbb6bd9, 0xff6b6b];
+
+/** 「JUMP」の文字(キャンバスに描いて板に貼る) */
+function jumpLabel(): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 48;
+  const g = canvas.getContext('2d')!;
+  g.fillStyle = 'rgba(0,0,0,0.55)';
+  g.fillRect(0, 0, 128, 48);
+  g.fillStyle = '#ffd54f';
+  g.font = 'bold 32px sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('JUMP', 64, 25);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false }));
+  sprite.scale.set(0.8, 0.3, 1);
+  return sprite;
+}
 
 export class BrainOverlay {
   readonly root = new THREE.Group();
@@ -28,6 +50,10 @@ export class BrainOverlay {
   private discMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.75, depthWrite: false });
   private eyes: THREE.InstancedMesh[] = [];
   private arrows: THREE.ArrowHelper[] = [];
+  /** ジャンプの指令の印(上向きの矢印と文字) */
+  private jumps: THREE.Group[] = [];
+  private jumpGeometry = new THREE.ConeGeometry(0.14, 0.32, 12);
+  private jumpMaterial = new THREE.MeshBasicMaterial({ color: 0xffd54f, depthTest: false });
   private matrix = new THREE.Matrix4();
   private color = new THREE.Color();
 
@@ -37,9 +63,20 @@ export class BrainOverlay {
       const eye = new THREE.InstancedMesh(this.discGeometry, this.discMaterial, EYE_OFFSETS.length);
       eye.frustumCulled = false;
       this.eyes.push(eye);
-      const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), 1, TEAM_COLORS[i], 0.25, 0.16);
+      this.root.add(eye);
+    }
+    for (let i = 0; i < MAX_FIGHTERS; i++) {
+      const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), 1, ARROW_COLORS[i], 0.25, 0.16);
       this.arrows.push(arrow);
-      this.root.add(eye, arrow);
+      const jump = new THREE.Group();
+      const cone = new THREE.Mesh(this.jumpGeometry, this.jumpMaterial);
+      cone.renderOrder = 10;
+      const label = jumpLabel();
+      label.position.y = 0.35;
+      jump.add(cone, label);
+      jump.visible = false;
+      this.jumps.push(jump);
+      this.root.add(arrow, jump);
     }
     this.root.visible = false;
   }
@@ -52,11 +89,18 @@ export class BrainOverlay {
     }
     // 判断脳のない場面(移動・追跡・穴をまたぐ などの運動脳のトレーニング)でも、進みたい向きの矢印は出す
     this.root.visible = true;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < MAX_FIGHTERS; i++) {
       const f = ep.fighters[i] as Fighter | undefined;
-      const brain = f && !f.out && hasBrains(ep) ? ep.decisionBrain(i) : null;
-      this.eyes[i].visible = !!brain;
+      const brain = i < 2 && f && !f.out && hasBrains(ep) ? ep.decisionBrain(i) : null;
+      if (i < 2) this.eyes[i].visible = !!brain;
       this.arrows[i].visible = !!f && !f.out && !!f.command;
+      // ジャンプボタン:指令でジャンプを出している間だけ、キャラの上に印を出す
+      const jumping = !!f && !f.out && (f.command?.jump ?? 0) > 0;
+      this.jumps[i].visible = jumping;
+      if (jumping) {
+        const p = f!.position();
+        this.jumps[i].position.set(p.x, p.y + 0.9, p.z);
+      }
       if (f && brain) this.updateEye(i, f, brain);
       if (f && !f.out) this.updateArrow(i, f);
     }
@@ -102,5 +146,12 @@ export class BrainOverlay {
     this.discMaterial.dispose();
     for (const e of this.eyes) e.dispose();
     for (const a of this.arrows) a.dispose();
+    this.jumpGeometry.dispose();
+    this.jumpMaterial.dispose();
+    for (const j of this.jumps) {
+      const sprite = j.children[1] as THREE.Sprite;
+      sprite.material.map?.dispose();
+      sprite.material.dispose();
+    }
   }
 }

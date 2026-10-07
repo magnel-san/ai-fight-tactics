@@ -36,6 +36,7 @@ const TABS: { id: Tab; label: string }[] = [
 const BATTLE_SUBS: { id: BattleSub; label: string; note: string }[] = [
   { id: 'battle', label: 'バトル', note: '崩れるステージで1対1' },
   { id: 'race', label: 'かけっこ', note: 'ゴールまでのタイムを競う' },
+  { id: 'track', label: '長距離', note: 'トラックを3周。チェックポイントを順番に通る' },
   { id: 'jump', label: 'ジャンプ', note: 'どれだけ高く跳べるかを競う' },
   { id: 'soccer', label: 'サッカー', note: '3対3でボールを押し込む' },
   { id: 'random', label: 'ランダムマッチ', note: 'オンラインの相手と自動で対戦(レートあり)' },
@@ -187,10 +188,7 @@ export function App() {
         </nav>
         <span className="current-char" title="いま育てているキャラ(マイキャラで切り替え)">
           {character.name}
-          <span className="muted small">
-            {' '}
-            ・合格 {character.progress.passed.length}
-          </span>
+          <span className="muted small"> ・合格 {character.progress.passed.length}</span>
         </span>
         <DeterminismCheck />
       </header>

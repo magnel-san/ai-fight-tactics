@@ -4,8 +4,9 @@
 // 参加するキャラは、自分のキャラと、バトルの対戦相手の一覧(BOT・保存キャラ・受け取ったキャラ)から選ぶ。
 import { useEffect, useRef, useState } from 'react';
 import { battleFighter, canEnter, ENTRY_REQUIRED_TASK, type Character } from '../../core/character';
-import { HIGH_JUMP, RACE, SOCCER, type SoccerRole } from '../../core/config';
+import { HIGH_JUMP, RACE, SOCCER, TRACK, type SoccerRole } from '../../core/config';
 import { HighJumpEpisode, type HighJumpResult } from '../../core/events/highjump';
+import { TrackEpisode, TRACK_LENGTH, type TrackResult } from '../../core/events/track';
 import { RaceEpisode, type RaceResult } from '../../core/events/race';
 import { DEFAULT_ROLES, SoccerEpisode, type SoccerResult } from '../../core/events/soccer';
 import { SOCCER_ROLE_LIST } from '../../core/training/soccerDrill';
@@ -28,9 +29,15 @@ interface Props {
   mode: EventMode;
 }
 
-export type EventMode = 'race' | 'jump' | 'soccer' | 'random';
+export type EventMode = 'race' | 'track' | 'jump' | 'soccer' | 'random';
 type Mode = EventMode;
-const MODE_TITLES: Record<Mode, string> = { race: 'かけっこ', jump: 'ジャンプ', soccer: 'サッカー(3対3)', random: 'ランダムマッチ' };
+const MODE_TITLES: Record<Mode, string> = {
+  race: 'かけっこ',
+  track: '長距離(トラック3周)',
+  jump: 'ジャンプ',
+  soccer: 'サッカー(3対3)',
+  random: 'ランダムマッチ',
+};
 const NONE = '';
 const ME = '__me__';
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
@@ -53,6 +60,7 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
   const [rolesA, setRolesA] = useState<SoccerRole[]>([...DEFAULT_ROLES]);
   const [rolesB, setRolesB] = useState<SoccerRole[]>([...DEFAULT_ROLES]);
   const [race, setRace] = useState<{ names: string[]; result: RaceResult | null; time: number } | null>(null);
+  const [track, setTrack] = useState<{ names: string[]; result: TrackResult; time: number; done: boolean } | null>(null);
   const [jump, setJump] = useState<{ names: string[]; result: HighJumpResult | null; attempt: number; done: boolean } | null>(null);
   const [soccer, setSoccer] = useState<{ names: string[][]; result: SoccerResult; time: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +122,37 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
       if (now - lastHud.current > 150 || r.done) {
         lastHud.current = now;
         setRace({ names, result: r.result(), time: r.time });
+      }
+    };
+    viewer.setEpisodes(ep);
+  };
+
+  const startTrack = () => {
+    const R = rapierRef.current;
+    const viewer = viewerRef.current;
+    if (!R || !viewer) return;
+    setError(null);
+    setSoccer(null);
+    setRace(null);
+    setJump(null);
+    const chosen = [ME, ...runners].map(pick).filter((x): x is NonNullable<typeof x> => x !== null);
+    if (chosen.length === 0) {
+      setError(`トレーニング「${TASKS[EVENT_REQUIRED_TASK].label}」に合格したキャラが必要です`);
+      return;
+    }
+    const ep = new TrackEpisode(
+      R,
+      chosen.map((c) => c.data),
+      randomSeed(),
+    );
+    const names = chosen.map((c) => c.name);
+    setTrack({ names, result: ep.result(), time: 0, done: false });
+    viewer.onFrame = (e) => {
+      const tr = e as TrackEpisode;
+      const now = performance.now();
+      if (now - lastHud.current > 200 || tr.done) {
+        lastHud.current = now;
+        setTrack({ names, result: tr.result(), time: tr.time, done: tr.done });
       }
     };
     viewer.setEpisodes(ep);
@@ -214,10 +253,51 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
 
         {mode === 'random' ? (
           <RandomMatchPanel charId={charId} character={character} eligible={ready} viewer={() => viewerRef.current} rapier={() => rapierRef.current} />
+        ) : mode === 'track' ? (
+          <>
+            <p className="muted small">
+              楕円のトラックを{TRACK.laps}周します(1周 約{Math.round(TRACK_LENGTH)}m)。トラックには1周に{TRACK.checkpoints}
+              個のチェックポイント(白い柱、黄色はスタート・ゴール)があり、
+              順番どおりに全部通らないと周回になりません。全員が同じトラックを走るので、ぶつかることもあります。制限時間 {TRACK.timeLimit}秒。
+              トレーニング「長距離(トラック)」で鍛えると、曲がりながら速く走れるようになります。
+            </p>
+            <div className="vs">
+              <div className="vs-name">{character.name}(自分)</div>
+              {runners.map((id, i) => (
+                <select key={i} value={id} onChange={(e) => setAt(runners, setRunners, i, e.target.value)}>
+                  {options(true, false)}
+                </select>
+              ))}
+            </div>
+            <div className="row">
+              <button className="primary" disabled={!ready} onClick={startTrack}>
+                スタート
+              </button>
+            </div>
+            {track && (
+              <div className="result">
+                <div className="result-title">{track.done ? '結果' : `${track.time.toFixed(0)} 秒`}</div>
+                <ol className="ranking">
+                  {track.names
+                    .map((n, i) => ({ n, i }))
+                    .sort((a, b) => track.result.rank[a.i] - track.result.rank[b.i])
+                    .map(({ n, i }) => (
+                      <li key={i}>
+                        {n}:
+                        {track.result.finishAt[i] !== null
+                          ? `ゴール ${track.result.finishAt[i]!.toFixed(1)}秒`
+                          : `${Math.min(TRACK.laps, track.result.laps[i] + 1)}周目・チェックポイント ${track.result.passed[i]}/${TRACK.laps * TRACK.checkpoints}`}
+                      </li>
+                    ))}
+                </ol>
+              </div>
+            )}
+          </>
         ) : mode === 'jump' ? (
           <>
             <p className="muted small">
-              {HIGH_JUMP.interval}秒ごとにジャンプの合図が出て、{HIGH_JUMP.attempts}回跳びます。コアがどれだけ高く上がったか(跳ぶ前からの上がり幅)の、いちばん高い記録で順位を決めます。
+              {HIGH_JUMP.interval}秒ごとにジャンプの合図が出て、{HIGH_JUMP.attempts}
+              回跳びます。コアがどれだけ高く上がったか(跳ぶ前からの上がり幅)の、いちばん高い記録で順位を決めます。
               トレーニング「ジャンプ」で鍛えると高く跳べるようになります(ピストンを下向きに付けるのもおすすめ)。
             </p>
             <div className="vs">
