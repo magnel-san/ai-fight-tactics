@@ -190,7 +190,7 @@ describe('判断脳の入力と試合', () => {
     R = await initRapier();
   });
 
-  it('目は4周61点、入力は77個', () => {
+  it('目は4周61点、入力は81個', () => {
     expect(EYE_OFFSETS.length).toBe(61);
     const world = new R.World({ x: 0, y: -9.81, z: 0 });
     const stage = new Stage(R, world, 1, { rules: true });

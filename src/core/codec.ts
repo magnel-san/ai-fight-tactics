@@ -19,8 +19,9 @@ import { TASK_ORDER, type TaskName } from './training/tasks';
  *   5:浮力ブロックを風ブロックに置き換え(下向きに吹く風にする)
  *   6:円柱の軸の向き(cylAxis)と、関節のタイヤモード(tire)を追加(古いデータはそのまま読める)
  *   7:関節の360°回転(spin)を追加(古いデータはそのまま読める)
+ *   8:判断脳の入力の最後に、相手との接触4つ(触れているか・近づく速さ・いちばん近いブロックまでの距離・相手の周りの危険度)を追加(入力81)
  */
-export const FORMAT_VERSION = 7;
+export const FORMAT_VERSION = 8;
 
 interface BrainJson {
   inputs: number;
@@ -120,8 +121,27 @@ function migrate(input: { version?: unknown }): CharacterJson {
   if (json.version === 5) json = { ...json, version: 6 };
   // 6 → 7:項目を足しただけ
   if (json.version === 6) json = { ...json, version: 7 };
+  if (json.version === 7) json = migrate7to8(json);
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
+}
+
+/** 形式3〜7の判断脳の形(入力77・出力4) */
+const DECISION_V3 = { inputs: 77, hidden: DECISION_SHAPE.hidden, outputs: 4 };
+
+/**
+ * 7 → 8:判断脳の入力の最後に、相手との接触4つを足す。足した重みは0なので、動きは変わらない
+ */
+function migrate7to8(json: CharacterJson): CharacterJson {
+  const d = json.brains?.decision;
+  if (!d || typeof d.weights !== 'string') return { ...json, version: 8 };
+  const weights = remapInputs(
+    decodeWeights(d.weights),
+    DECISION_V3,
+    DECISION_SHAPE,
+    Array.from({ length: DECISION_V3.inputs }, (_, i) => i),
+  );
+  return { ...json, version: 8, brains: { ...json.brains, decision: { ...DECISION_SHAPE, weights: encodeWeights(weights) } } };
 }
 
 /**
@@ -180,7 +200,7 @@ function migrate2to3(json: CharacterJson): CharacterJson {
   const d = brains.decision;
   if (d && typeof d.weights === 'string') {
     const from = { inputs: d.inputs, hidden: d.hidden, outputs: 3 };
-    brains.decision = { ...DECISION_SHAPE, weights: encodeWeights(appendOutputs(decodeWeights(d.weights), from, DECISION_SHAPE)) };
+    brains.decision = { ...DECISION_V3, weights: encodeWeights(appendOutputs(decodeWeights(d.weights), from, DECISION_V3)) };
   }
   return { ...json, version: 3, brains };
 }

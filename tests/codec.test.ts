@@ -32,10 +32,10 @@ describe('キャラのJSON', () => {
   it('キャラの往復で、体・脳・育成状況が一致する', () => {
     const c = sample();
     const json = characterToJson(c);
-    expect(json.version).toBe(7);
+    expect(json.version).toBe(8);
     expect(json.brains.motor!.inputs).toBe(26);
     expect(json.brains.motor!.outputs).toBe(4);
-    expect(json.brains.decision!.inputs).toBe(77);
+    expect(json.brains.decision!.inputs).toBe(81);
     const back = parseCharacter(JSON.stringify(json));
     expect(back.name).toBe(c.name);
     expect(back.blueprint).toEqual(c.blueprint);
@@ -131,7 +131,7 @@ describe('形式の移行', () => {
     expect([...b]).toEqual([...a]);
   });
 
-  it('移行した判断脳は、増えたマスの値に関係なく古い脳と同じ出力になる(1 → 2 → 3)', async () => {
+  it('移行した判断脳は、増えた入力の値に関係なく古い脳と同じ出力になる(1 → … → 8)', async () => {
     const { mlpForward, mlpInit } = await import('../src/core/brain/mlp');
     const { DECISION_SHAPE, EYE_HEXES } = await import('../src/core/brain/decision');
     const { hexesWithin } = await import('../src/core/stage/hex');
@@ -145,13 +145,13 @@ describe('形式の移行', () => {
     v1.brains.decision = { inputs: 35, hidden: 24, outputs: 3, weights: encodeWeights(oldW) };
     v1.brains.motor = null; // この確認では判断脳だけを見る
     const c = parseCharacter(v1);
-    expect(c.decision!.length).toBe(24 * 77 + 24 + 4 * 24 + 4);
+    expect(c.decision!.length).toBe(24 * 81 + 24 + 4 * 24 + 4);
 
     const rng = new Rng(4);
     const oldEye = hexesWithin(2);
     for (let trial = 0; trial < 5; trial++) {
       const oldIn = Array.from({ length: 35 }, () => rng.range(-1, 1));
-      const newIn = Array.from({ length: 77 }, () => rng.range(-1, 1)); // 増えたマスはでたらめな値
+      const newIn = Array.from({ length: 81 }, () => rng.range(-1, 1)); // 増えたマス・相手との接触はでたらめな値
       oldEye.forEach((h, i) => (newIn[EYE_HEXES.findIndex((e) => e.q === h.q && e.r === h.r)] = oldIn[i]));
       for (let i = 19; i < 35; i++) newIn[61 + (i - 19)] = oldIn[i];
       const a = new Float64Array(3);
@@ -162,7 +162,7 @@ describe('形式の移行', () => {
       expect([...b.subarray(0, 3)]).toEqual([...a]);
       expect(b[3]).toBe(0);
     }
-    expect(characterToJson(c).version).toBe(7);
+    expect(characterToJson(c).version).toBe(8);
   });
 });
 

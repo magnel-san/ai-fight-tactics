@@ -1,9 +1,10 @@
 // 判断脳(仕様書セクション7)。体に依存せず、「どの方向へどの速さで進むか」を決めて運動脳に指令する。
-// 入力77:周囲タイル61(4周分)・自分3・相手7・安全円5・時間1。
+// 入力81:周囲タイル61(4周分)・自分3・相手7・安全円5・時間1・相手との接触4。
 // 出力4:進む方向(コア基準の水平2成分)・速さ・ジャンプ指令(0より大きければ跳ぶ)。
 import { BATTLE, BRAIN, STAGE } from '../config';
 import type { Rng } from '../math/rng';
 import type { Fighter } from '../sim/fighter';
+import { rotate } from '../math/quat';
 import { hexesWithin, hexToWorld, worldToHex } from '../stage/hex';
 import type { Stage } from '../stage/stage';
 import { mlpForward, mlpInit, mlpParamCount, type MlpShape } from './mlp';
@@ -32,15 +33,54 @@ export const EYE_HEXES = hexesWithin(BRAIN.eyeRings);
  * 目:EYE_HEXES のワールド座標での位置。コアの向きに合わせて回転させて使う。
  * x はコアの +x 方向、z は正面方向の距離 [m]
  */
-export const EYE_OFFSETS: readonly { x: number; z: number }[] = EYE_HEXES.map((h) =>
-  hexToWorld(h, STAGE.tileCircumradius),
-);
+export const EYE_OFFSETS: readonly { x: number; z: number }[] = EYE_HEXES.map((h) => hexToWorld(h, STAGE.tileCircumradius));
 
 export interface DecisionContext {
   self: Fighter;
   opponent: Fighter | null;
   stage: Stage;
   time: number;
+  /** 2体のブロックが触れているか(試合が調べて渡す) */
+  touching?: boolean;
+}
+
+/** すべてのブロックの中心のワールド座標 */
+export function blockWorldPositions(f: Fighter): { x: number; y: number; z: number }[] {
+  const c = f.creature;
+  return c.localOffsets.map((o, i) => {
+    const body = c.bodies[c.segmentOf[i]];
+    const t = body.translation();
+    const [x, y, z] = rotate(body.rotation(), o[0], o[1], o[2]);
+    return { x: t.x + x, y: t.y + y, z: t.z + z };
+  });
+}
+
+/** 2体のブロック同士の、いちばん近い中心間の距離 [m] */
+export function nearestBlockDistance(a: Fighter, b: Fighter): number {
+  const pa = blockWorldPositions(a);
+  const pb = blockWorldPositions(b);
+  let best = Infinity;
+  for (const p of pa) {
+    for (const q of pb) {
+      const d = (p.x - q.x) ** 2 + (p.y - q.y) ** 2 + (p.z - q.z) ** 2;
+      if (d < best) best = d;
+    }
+  }
+  return Math.sqrt(best);
+}
+
+/** 相手の周り(自分のマスと隣の6マス)で、いちばん危ないところの危険度(穴なら1)。崖っぷちにいる相手ほど大きい */
+const NEIGHBOR_HEXES = hexesWithin(1);
+export function edgeDanger(stage: Stage, f: Fighter): number {
+  const p = f.position();
+  const h = worldToHex(p.x, p.z, stage.size);
+  let worst = 0;
+  for (const n of NEIGHBOR_HEXES) {
+    const w = hexToWorld({ q: h.q + n.q, r: h.r + n.r }, stage.size);
+    const d = stage.dangerAt(w.x, w.z);
+    worst = Math.max(worst, d < 0 ? 1 : d);
+  }
+  return worst;
 }
 
 /** 判断脳の入力を組み立てる(観戦の「脳の様子」でも使えるよう外に出しておく) */
@@ -98,6 +138,23 @@ export function decisionInputs(ctx: DecisionContext, x: Float64Array): void {
 
   // 時間
   x[k++] = ctx.time / BATTLE.timeLimit;
+
+  // 相手との接触:触れているか・近づく速さ・いちばん近いブロックまでの距離・相手の周りの危険度(相手がいなければ 0)
+  if (opponent && !opponent.out) {
+    const q = opponent.position();
+    const ov = opponent.core.linvel();
+    const dx = q.x - p.x;
+    const dz = q.z - p.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    // 近づく速さ = 距離が縮む速さ(相対速度の、相手に向かう成分の反対)
+    const closing = dist > 1e-9 ? -((ov.x - v.x) * dx + (ov.z - v.z) * dz) / dist : 0;
+    x[k++] = ctx.touching ? 1 : 0;
+    x[k++] = closing / BRAIN.decisionVelScale;
+    x[k++] = Math.min(1, nearestBlockDistance(self, opponent) / BRAIN.decisionContactScale);
+    x[k++] = edgeDanger(stage, opponent);
+  } else {
+    for (let i = 0; i < 4; i++) x[k++] = 0;
+  }
 }
 
 export class DecisionBrain {
@@ -139,7 +196,5 @@ export function footing(stage: Stage, self: Fighter): number[] {
   const c = self.command;
   const len = Math.sqrt(c.dirX * c.dirX + c.dirZ * c.dirZ);
   if (len < 1e-9) return BRAIN.footingDistances.map(() => 0);
-  return BRAIN.footingDistances.map((d) =>
-    stage.isHole(p.x + (c.dirX / len) * d, p.z + (c.dirZ / len) * d) ? 1 : 0,
-  );
+  return BRAIN.footingDistances.map((d) => (stage.isHole(p.x + (c.dirX / len) * d, p.z + (c.dirZ / len) * d) ? 1 : 0));
 }

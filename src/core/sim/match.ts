@@ -249,7 +249,7 @@ export class MatchEpisode extends EpisodeBase {
       const brain = this.brains[i];
       const external = this.externalCommand?.(i, f) ?? null;
       if (external) f.command = external;
-      else if (brain) f.command = brain.think({ self: f, opponent, stage, time: t });
+      else if (brain) f.command = brain.think({ self: f, opponent, stage, time: t, touching: touchingNow });
       else if (this.options.fighters[i].controller === 'rush') f.command = rushCommand(f, opponent);
       f.drive(t, footing(stage, f));
     });

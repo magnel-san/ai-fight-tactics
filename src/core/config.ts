@@ -384,8 +384,8 @@ export const BRAIN = {
   motorHidden: 32,
   /** 判断脳の「目」:コアのまわり何周分のタイルを見るか(4周 = 61マス) */
   eyeRings: 4,
-  /** 判断脳の入力:目61・自分3・相手7・安全円5・時間1 */
-  decisionInputs: 77,
+  /** 判断脳の入力:目61・自分3・相手7・安全円5・時間1・相手との接触4(触れているか・近づく速さ・いちばん近いブロックまでの距離・相手の周りの危険度) */
+  decisionInputs: 81,
   decisionHidden: 24,
   /** 判断脳の出力:進む方向2・速さ1・ジャンプ指令1 */
   decisionOutputs: 4,
@@ -398,6 +398,8 @@ export const BRAIN = {
   decisionPosScale: 6,
   decisionVelScale: 2,
   decisionDistScale: 8,
+  /** 判断脳:いちばん近いブロック同士の距離をそろえる目安 [m](これより離れていれば 1) */
+  decisionContactScale: 2,
   safeRadiusScale: 12,
   /** 運動脳の「足元」:指令方向の前方のこれらの距離 [m] が穴かどうか */
   footingDistances: [0.6, 1.2, 1.8],
