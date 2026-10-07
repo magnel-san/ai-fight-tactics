@@ -144,9 +144,18 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
     latestTraining.current = null;
   };
 
+  // 3D表示は、この画面を初めて開いたときに作る。体を組み直すたびにこの画面は作り直されるので、
+  // 開いていないのに表示を作ると、ブラウザの描画領域の上限を超えて、キャラ作成の3D表示が真っ暗になる
+  const [shown, setShown] = useState(active);
+  useEffect(() => {
+    if (active) setShown(true);
+  }, [active]);
+
   // 3D表示と Rapier の準備
   useEffect(() => {
+    if (!shown) return;
     const viewer = new EpisodeViewer(canvasRef.current!);
+    viewer.speed = active ? speed : 0;
     viewerRef.current = viewer;
     viewer.onFrame = (ep) => {
       episodeRef.current = ep;
@@ -198,7 +207,7 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
       viewerRef.current = null;
     };
     // 表示は最初に1回だけ作る。再生内容は replay.current で差し替える
-  }, []);
+  }, [shown]);
 
   // 外から渡されたリプレイ(マイルストーンなど)を1回再生する
   useEffect(() => {

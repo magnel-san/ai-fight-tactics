@@ -20,6 +20,7 @@ import {
   type Vec3i,
 } from '../../core/creature/blueprint';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
+import { guardContext, type ContextGuard } from '../../render/webglContext';
 
 export interface Placement {
   /** 置かれる格子座標(左右対称なら2つ) */
@@ -88,6 +89,7 @@ export class EditorView {
   private disposables: { dispose(): void }[] = [];
   private blockMeshes: THREE.Mesh[] = [];
   private blueprint: Blueprint = { blocks: [] };
+  private context: ContextGuard;
   private ghostType: BlockType = 'base';
   private hovered: { id: number; face: Face } | null = null;
   private downAt: { x: number; y: number } | null = null;
@@ -102,6 +104,11 @@ export class EditorView {
     private handlers: EditorHandlers,
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // 描画領域が失われても、復旧したら作り直して描き直す
+    this.context = guardContext(this.renderer, canvas, () => {
+      this.resize();
+      this.setBlueprint(this.blueprint);
+    });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.scene.background = new THREE.Color(0x1d2330);
     this.camera.position.set(2.0, 1.6, 2.6);
@@ -288,6 +295,7 @@ export class EditorView {
     this.pickMaterial.dispose();
     this.controls.dispose();
     this.renderer.dispose();
+    this.context.release();
   }
 
   private material(type: BlockType): THREE.MeshStandardMaterial {

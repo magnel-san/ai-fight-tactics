@@ -7,6 +7,7 @@ import { MOVE_TASK, PHYSICS } from '../core/config';
 import type { Episode } from '../core/training/episode';
 import { buildCreatureMesh, syncCreatureMesh, type CreatureMesh } from './creatureMesh';
 import { StageMesh } from './StageMesh';
+import { guardContext, type ContextGuard } from './webglContext';
 
 interface Shown {
   episode: Episode;
@@ -33,6 +34,7 @@ export class EpisodeViewer {
   private acc = 0;
   private endWait = 0;
   private resizeObserver: ResizeObserver;
+  private context: ContextGuard;
   private focus = new THREE.Vector3();
   /** 再生速度(1 = 実時間、0 = 止める) */
   speed = 1;
@@ -47,6 +49,8 @@ export class EpisodeViewer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // 描画領域が失われても、復旧したら次のフレームから描き直す(three.js が形状などを送り直す)
+    this.context = guardContext(this.renderer, canvas, () => this.resize());
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.shadowMap.enabled = true;
     this.scene.background = new THREE.Color(0x1d2330);
@@ -185,6 +189,7 @@ export class EpisodeViewer {
     });
     this.controls.dispose();
     this.renderer.dispose();
+    this.context.release();
   }
 
   private clear(): void {
