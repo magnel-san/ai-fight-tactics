@@ -1,11 +1,9 @@
 // 設計図の編集操作(キャラクリエイト画面から使う)。
 // どの操作も元の設計図は変更せず、新しい設計図を返す。結果は必ず validate() を通る。
-import type { BlockType } from '../config';
+import type { BlockShape, BlockType } from '../config';
 import { blockPositions, FACE_DIR, validate, type Axis, type Blueprint, type Face, type Vec3i, type BlockSpec } from './blueprint';
 
-export type EditResult =
-  | { ok: true; blueprint: Blueprint; /** 操作は成功したが知らせたいこと */ notes: string[] }
-  | { ok: false; errors: string[] };
+export type EditResult = { ok: true; blueprint: Blueprint; /** 操作は成功したが知らせたいこと */ notes: string[] } | { ok: false; errors: string[] };
 
 /** 左右対称の基準面は x = 0(コアの正面 +z を向いたとき、x が左右方向) */
 export function mirrorCell(p: Vec3i): Vec3i {
@@ -36,11 +34,31 @@ function finish(bp: Blueprint, notes: string[] = []): EditResult {
   return errors.length > 0 ? { ok: false, errors } : { ok: true, blueprint: bp, notes };
 }
 
+/** 置くブロックの形と摩擦 */
+export interface BlockLook {
+  shape?: BlockShape;
+  grip?: boolean;
+}
+
+/** 形と摩擦を設定したブロック(既定の値のときは持たない) */
+function withLook(b: BlockSpec, look: BlockLook | undefined): BlockSpec {
+  const next: BlockSpec = { ...b };
+  if (look?.shape !== undefined) {
+    if (look.shape === 'cube') delete next.shape;
+    else next.shape = look.shape;
+  }
+  if (look?.grip !== undefined) {
+    if (look.grip) next.grip = true;
+    else delete next.grip;
+  }
+  return next;
+}
+
 /**
  * ブロックを1つ追加する。axis は関節の回転軸、pistonDir はピストンの伸びる向き
- * (省略または付けた面と同じなら、付けた面の向き)
+ * (省略または付けた面と同じなら、付けた面の向き)、look は形と摩擦
  */
-export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis, pistonDir?: Face): EditResult {
+export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis, pistonDir?: Face, look?: BlockLook): EditResult {
   if (type === 'core') return { ok: false, errors: ['コアは追加できません'] };
   if (!bp.blocks[parent]) return { ok: false, errors: [`親ブロック${parent}がありません`] };
   if (blockAt(bp, cellOnFace(bp, parent, face)) !== undefined) {
@@ -53,15 +71,15 @@ export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockT
       : type === 'piston' && pistonDir && pistonDir !== face
         ? { id, type, parent, face, dir: pistonDir }
         : { id, type, parent, face };
-  return finish({ blocks: [...bp.blocks, block] });
+  return finish({ blocks: [...bp.blocks, withLook(block, look)] });
 }
 
 /**
  * 左右対称モードでの追加。反対側の対応する位置にも同じブロックを置く。
  * 置く位置が対称面上にある場合や、反対側に親がない・埋まっている場合は、片側だけに置いて notes で知らせる。
  */
-export function addBlockSymmetric(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis, pistonDir?: Face): EditResult {
-  const first = addBlock(bp, parent, face, type, axis, pistonDir);
+export function addBlockSymmetric(bp: Blueprint, parent: number, face: Face, type: BlockType, axis?: Axis, pistonDir?: Face, look?: BlockLook): EditResult {
+  const first = addBlock(bp, parent, face, type, axis, pistonDir, look);
   if (!first.ok) return first;
 
   const target = cellOnFace(bp, parent, face);
@@ -76,7 +94,7 @@ export function addBlockSymmetric(bp: Blueprint, parent: number, face: Face, typ
     return { ...first, notes: ['反対側の位置が埋まっているため、片側だけに置きました'] };
   }
   // 反対側のピストンは、伸びる向きも左右を反転させる
-  const second = addBlock(first.blueprint, mirrorParent, mirrorFace(face), type, axis, pistonDir ? mirrorFace(pistonDir) : undefined);
+  const second = addBlock(first.blueprint, mirrorParent, mirrorFace(face), type, axis, pistonDir ? mirrorFace(pistonDir) : undefined, look);
   if (!second.ok) return { ok: false, errors: second.errors.map((e) => `左右対称に置けません:${e}`) };
   return second;
 }
@@ -158,6 +176,22 @@ export function setJointAxisSymmetric(bp: Blueprint, id: number, axis: Axis): Ed
   const mirror = blockAt(bp, mirrorCell(blockPositions(bp)[id]));
   if (mirror === undefined || mirror === id || bp.blocks[mirror].type !== 'joint') return first;
   return setJointAxis(first.blueprint, mirror, axis);
+}
+
+/** ブロックの形や摩擦を変更する(摩擦オンにするとコストが増えるので、上限を超えるときは失敗する) */
+export function setBlockLook(bp: Blueprint, id: number, look: BlockLook): EditResult {
+  if (!bp.blocks[id]) return { ok: false, errors: [`ブロック${id}がありません`] };
+  return finish({ blocks: bp.blocks.map((x) => (x.id === id ? withLook(x, look) : x)) });
+}
+
+/** 左右対称モードでの形・摩擦の変更。反対側の同じ位置にあるブロックも同じにする */
+export function setBlockLookSymmetric(bp: Blueprint, id: number, look: BlockLook): EditResult {
+  const first = setBlockLook(bp, id, look);
+  if (!first.ok) return first;
+  const pos = blockPositions(bp)[id];
+  const mirror = blockAt(bp, mirrorCell(pos));
+  if (mirror === undefined || mirror === id) return first;
+  return setBlockLook(first.blueprint, mirror, look);
 }
 
 /** コアだけの設計図 */

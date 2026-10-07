@@ -3,7 +3,7 @@
 // 参加できるのは、トレーニング「対象を追う」に合格したキャラだけ(指令の方向へまっすぐ進めないと競技にならないため)。
 // 参加するキャラは、自分のキャラと、バトルの対戦相手の一覧(BOT・保存キャラ・受け取ったキャラ)から選ぶ。
 import { useEffect, useRef, useState } from 'react';
-import type { Character } from '../../core/character';
+import { canEnter, ENTRY_REQUIRED_TASK, type Character } from '../../core/character';
 import { RACE, SOCCER } from '../../core/config';
 import { RaceEpisode, type RaceResult } from '../../core/events/race';
 import { SoccerEpisode, type SoccerResult } from '../../core/events/soccer';
@@ -29,8 +29,8 @@ const ME = '__me__';
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
-/** 種目に参加するために合格が必要なトレーニング */
-export const EVENT_REQUIRED_TASK: TaskName = 'chase';
+/** 種目に参加するために合格が必要なトレーニング(トーナメント・ランダムマッチと同じ) */
+export const EVENT_REQUIRED_TASK: TaskName = ENTRY_REQUIRED_TASK;
 
 export function EventsScene({ charId, character, entries, active }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -48,7 +48,7 @@ export function EventsScene({ charId, character, entries, active }: Props) {
   const [error, setError] = useState<string | null>(null);
   const lastHud = useRef(0);
 
-  const ready = !!character.motor && character.progress.passed.includes(EVENT_REQUIRED_TASK);
+  const ready = canEnter(character);
 
   useEffect(() => {
     const viewer = new EpisodeViewer(canvasRef.current!);

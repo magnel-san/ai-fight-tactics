@@ -114,7 +114,7 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
   /** 試合のそれぞれの側が、どのモンスターか */
   const sideKey = (entry: number, serverKey: string) => groups.keyOf.get(entry) ?? groups.byServerKey.get(serverKey);
   const myMatches = myKey ? matches.filter((m) => sideKey(m.a, m.aMonster) === myKey || sideKey(m.b, m.bMonster) === myKey).reverse() : [];
-  const ready = eligible && !!character.motor && !!character.decision;
+  const ready = eligible;
 
   const start = () =>
     run(async () => {
@@ -200,7 +200,9 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
           {busy ? '準備中…' : '相手を探して対戦'}
         </button>
       </div>
-      {eligible && !(character.motor && character.decision) && <p className="message">ランダムマッチは判断脳も鍛えたキャラだけ出られます</p>}
+      {eligible && !character.decision && (
+        <p className="muted small">判断脳をまだ鍛えていないので、相手に向かって突進します(判断脳を鍛えると、作戦を考えて戦います)</p>
+      )}
       {current && (
         <div className={`result ${current.shown ? (current.outcome.winner === 0 ? 'win' : current.outcome.winner === 1 ? 'lose' : 'draw') : ''}`}>
           <div className="result-title">{current.shown ? resultText(current.outcome) : '対戦中…'}</div>

@@ -189,7 +189,7 @@ describe('ピストン', () => {
       { id: 0, type: 'core', parent: null },
       { id: 1, type: 'joint', parent: 0, face: '+x', axis: 'z' },
       { id: 2, type: 'piston', parent: 0, face: '-y' },
-      { id: 3, type: 'grip', parent: 2, face: '-y' },
+      { id: 3, type: 'base', parent: 2, face: '-y', grip: true },
     ],
   };
 

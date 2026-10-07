@@ -15,8 +15,9 @@ import { TASK_ORDER, type TaskName } from './training/tasks';
  *   1:最初の形式(判断脳の入力35、目は2周19マス)
  *   2:判断脳の目を4周61マスに広げた(入力77)
  *   3:ピストンブロックを追加。運動脳の入力にジャンプ指令、判断脳の出力にジャンプ指令を追加
+ *   4:ブロックに形(shape)と摩擦オン(grip)を追加。グリップブロックを「基礎 + 摩擦オン」に置き換え、雲・浮力ブロックを追加
  */
-export const FORMAT_VERSION = 3;
+export const FORMAT_VERSION = 4;
 
 interface BrainJson {
   inputs: number;
@@ -62,10 +63,7 @@ export function base64ToBytes(s: string): Uint8Array {
   let o = 0;
   for (let i = 0; i < clean.length; i += 4) {
     const n =
-      (B64.indexOf(clean[i]) << 18) |
-      (B64.indexOf(clean[i + 1] ?? 'A') << 12) |
-      (B64.indexOf(clean[i + 2] ?? 'A') << 6) |
-      B64.indexOf(clean[i + 3] ?? 'A');
+      (B64.indexOf(clean[i]) << 18) | (B64.indexOf(clean[i + 1] ?? 'A') << 12) | (B64.indexOf(clean[i + 2] ?? 'A') << 6) | B64.indexOf(clean[i + 3] ?? 'A');
     if (o < out.length) out[o++] = (n >> 16) & 255;
     if (o < out.length) out[o++] = (n >> 8) & 255;
     if (o < out.length) out[o++] = n & 255;
@@ -113,8 +111,22 @@ function migrate(input: { version?: unknown }): CharacterJson {
   let json = input as CharacterJson;
   if (json.version === 1) json = migrate1to2(json);
   if (json.version === 2) json = migrate2to3(json);
+  if (json.version === 3) json = migrate3to4(json);
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
+}
+
+/**
+ * 3 → 4:グリップブロックを「基礎 + 摩擦オン」に置き換える。コスト・重さ・摩擦が同じなので、動きは変わらない
+ */
+function migrate3to4(json: CharacterJson): CharacterJson {
+  const bp = json.blueprint as { blocks?: unknown } | undefined;
+  if (!bp || !Array.isArray(bp.blocks)) return { ...json, version: 4 };
+  const blocks = bp.blocks.map((b: unknown) => {
+    const o = b as Record<string, unknown>;
+    return o && typeof o === 'object' && o.type === 'grip' ? { ...o, type: 'base', grip: true } : o;
+  });
+  return { ...json, version: 4, blueprint: { ...(json.blueprint as object), blocks } as unknown as Blueprint };
 }
 
 /**
@@ -129,7 +141,12 @@ function migrate2to3(json: CharacterJson): CharacterJson {
     const from = { inputs: m.inputs, hidden: m.hidden, outputs: m.outputs };
     const to = { inputs: m.inputs + 1, hidden: m.hidden, outputs: m.outputs };
     if (genome.length !== mlpParamCount(from) + 1) throw new Error('運動脳の重みの数が不正です');
-    const mlp = remapInputs(genome.subarray(0, genome.length - 1), from, to, Array.from({ length: from.inputs }, (_, i) => i));
+    const mlp = remapInputs(
+      genome.subarray(0, genome.length - 1),
+      from,
+      to,
+      Array.from({ length: from.inputs }, (_, i) => i),
+    );
     const next = new Float64Array(mlp.length + 1);
     next.set(mlp);
     next[mlp.length] = genome[genome.length - 1];
@@ -150,16 +167,15 @@ function migrate1to2(json: CharacterJson): CharacterJson {
   const oldEye = hexesWithin(2);
   const oldShape = { inputs: 35, hidden: DECISION_SHAPE.hidden, outputs: 3 };
   const inputMap = Array.from({ length: oldShape.inputs }, (_, i) =>
-    i < oldEye.length
-      ? EYE_HEXES.findIndex((h) => h.q === oldEye[i].q && h.r === oldEye[i].r)
-      : EYE_HEXES.length + (i - oldEye.length),
+    i < oldEye.length ? EYE_HEXES.findIndex((h) => h.q === oldEye[i].q && h.r === oldEye[i].r) : EYE_HEXES.length + (i - oldEye.length),
   );
   const weights = remapInputs(decodeWeights(d.weights), oldShape, { ...oldShape, inputs: 77 }, inputMap);
   const decision = { inputs: 77, hidden: DECISION_SHAPE.hidden, outputs: 3, weights: encodeWeights(weights) };
   return { ...json, version: 2, brains: { ...json.brains, decision } };
 }
 
-const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'grip', 'piston', 'sensor']);
+const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'piston', 'sensor', 'cloud', 'float']);
+const SHAPE_SET = new Set(['cube', 'sphere', 'cylinder']);
 const FACES = new Set(['+x', '-x', '+y', '-y', '+z', '-z']);
 const AXES = new Set(['x', 'y', 'z']);
 
@@ -181,6 +197,15 @@ function parseBlueprint(v: unknown): Blueprint {
     if (o.axis !== undefined) {
       if (!AXES.has(o.axis as string)) throw new Error(`ブロック${i}の軸が不正です`);
       spec.axis = o.axis as BlockSpec['axis'];
+    }
+    // 形と摩擦は、既定(立方体・摩擦オフ)のときは持たない(データを小さく保つ)
+    if (o.shape !== undefined && o.shape !== 'cube') {
+      if (!SHAPE_SET.has(o.shape as string)) throw new Error(`ブロック${i}の形が不正です`);
+      spec.shape = o.shape as BlockSpec['shape'];
+    }
+    if (o.grip !== undefined && o.grip !== false) {
+      if (o.grip !== true) throw new Error(`ブロック${i}の摩擦の設定が不正です`);
+      spec.grip = true;
     }
     return spec;
   });

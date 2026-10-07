@@ -1,12 +1,13 @@
 // 設計図からRapierの剛体・コライダー・関節を組み立てる(仕様書セクション4・5)。
 // 登録順は必ずブロックID順:剛体(セグメントの根のID順)→ コライダー(ブロックID順)→ 関節(関節ブロックのID順)。
 // 運動脳の入出力の並びは「関節(ID順)→ ピストン(ID順)」。
+// 弾力ブロックは親とばね(スライド)でつながり、浮力ブロックには物理ステップごとに上向きの力をかける(applyBlockForces)。
 import type { ImpulseJoint, PrismaticImpulseJoint, RevoluteImpulseJoint, RigidBody } from '@dimforge/rapier3d-compat';
-import { BLOCKS, BRAIN, CREATURE } from '../config';
+import { BLOCK_OPTIONS, BLOCKS, BOUNCY_SPRING, BRAIN, CREATURE, FLOAT_BLOCK } from '../config';
 import { atan2, cos, sin } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
-import { AXIS_DIR, blockPositions, FACE_DIR, pistonDirection, segmentsOf, validate, type Blueprint } from './blueprint';
+import { AXIS_DIR, blockPositions, cylinderAxis, FACE_DIR, pistonDirection, segmentsOf, shapeOf, validate, type Axis, type Blueprint } from './blueprint';
 
 export interface SpawnPose {
   /** コア中心のワールド座標 [m] */
@@ -27,6 +28,10 @@ export interface Creature {
   pistons: PrismaticImpulseJoint[];
   /** pistons[i] に対応するピストンブロックのID */
   pistonBlockIds: number[];
+  /** 弾力ブロックのばね(弾力ブロックのID順。脳では動かさない) */
+  springs: PrismaticImpulseJoint[];
+  /** 浮力ブロック:属する剛体の番号と、剛体のローカル座標での位置 */
+  floats: { body: number; local: [number, number, number] }[];
   /** 各ブロックが属する剛体の番号(描画で使う) */
   segmentOf: number[];
   /** 各ブロックの、属する剛体のローカル座標での中心 [m](描画で使う) */
@@ -61,26 +66,31 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
   // コライダー:各ブロックを、属する剛体のローカル座標に置く
   const half = size / 2 - CREATURE.colliderShrink;
   const localOffsets: [number, number, number][] = [];
+  const floats: Creature['floats'] = [];
   bp.blocks.forEach((b, i) => {
     const root = segments[segmentOf[i]].root;
-    const offset: [number, number, number] = [
-      (pos[i][0] - pos[root][0]) * size,
-      (pos[i][1] - pos[root][1]) * size,
-      (pos[i][2] - pos[root][2]) * size,
-    ];
+    const offset: [number, number, number] = [(pos[i][0] - pos[root][0]) * size, (pos[i][1] - pos[root][1]) * size, (pos[i][2] - pos[root][2]) * size];
     localOffsets.push(offset);
     const spec = BLOCKS[b.type];
-    // 角を丸めた立方体(外形は 2 × half のまま、角を半径 blockRoundness で丸める)
+    // 形ごとの当たり判定。外形の大きさはどれも 2 × half(立方体と円柱は角を半径 blockRoundness で丸める)。重さは形に関係なく同じ
     const r = CREATURE.blockRoundness;
-    const desc = R.ColliderDesc.roundCuboid(half - r, half - r, half - r, r)
+    const shape = shapeOf(b);
+    const desc =
+      shape === 'sphere'
+        ? R.ColliderDesc.ball(half)
+        : shape === 'cylinder'
+          ? R.ColliderDesc.roundCylinder(half - r, half - r, r).setRotation(CYLINDER_ROTATION[cylinderAxis(b)])
+          : R.ColliderDesc.roundCuboid(half - r, half - r, half - r, r);
+    desc
       .setTranslation(offset[0], offset[1], offset[2])
       .setMass(spec.mass)
-      .setFriction(spec.friction)
+      .setFriction(b.grip ? BLOCK_OPTIONS.gripFriction : spec.friction)
       .setRestitution(spec.restitution);
-    // グリップの摩擦と弾力の反発は、相手の値と平均せず大きい方を使う(特性をはっきり効かせる)
-    if (b.type === 'grip') desc.setFrictionCombineRule(R.CoefficientCombineRule.Max);
+    // 摩擦オンの摩擦と弾力の反発は、相手の値と平均せず大きい方を使う(特性をはっきり効かせる)
+    if (b.grip) desc.setFrictionCombineRule(R.CoefficientCombineRule.Max);
     if (b.type === 'bouncy') desc.setRestitutionCombineRule(R.CoefficientCombineRule.Max);
     world.createCollider(desc, bodies[segmentOf[i]]);
+    if (b.type === 'float') floats.push({ body: segmentOf[i], local: offset });
   });
 
   // 関節:親ブロックと関節ブロックの接する面の中心をヒンジの支点にする
@@ -88,8 +98,9 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
   const jointBlockIds: number[] = [];
   const pistons: PrismaticImpulseJoint[] = [];
   const pistonBlockIds: number[] = [];
+  const springs: PrismaticImpulseJoint[] = [];
   for (const b of bp.blocks) {
-    if (b.type !== 'joint' && b.type !== 'piston') continue;
+    if (b.type !== 'joint' && b.type !== 'piston' && b.type !== 'bouncy') continue;
     const parent = b.parent!;
     const parentRoot = segments[segmentOf[parent]].root;
     const anchorGrid = [0, 1, 2].map((k) => (pos[parent][k] + pos[b.id][k]) / 2);
@@ -103,6 +114,19 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
       y: (anchorGrid[1] - pos[b.id][1]) * size,
       z: (anchorGrid[2] - pos[b.id][2]) * size,
     };
+    if (b.type === 'bouncy') {
+      // 弾力:付けた面の向きに伸び縮みするばね。力をかけなければ元の位置(0)に戻る
+      const [dx, dy, dz] = FACE_DIR[b.face!];
+      const sdata = R.JointData.prismatic(anchor1, anchor2, { x: dx, y: dy, z: dz });
+      const spring = world.createImpulseJoint(sdata, bodies[segmentOf[parent]], bodies[segmentOf[b.id]], true) as ImpulseJoint as PrismaticImpulseJoint;
+      spring.setContactsEnabled(false);
+      spring.setLimits(-BOUNCY_SPRING.compress, BOUNCY_SPRING.stretch);
+      spring.configureMotorModel(R.MotorModel.ForceBased);
+      spring.setMotorMaxForce(BOUNCY_SPRING.maxForce);
+      spring.configureMotorPosition(0, BOUNCY_SPRING.stiffness, BOUNCY_SPRING.damping);
+      springs.push(spring);
+      continue;
+    }
     if (b.type === 'piston') {
       // ピストン:伸びる向き(指定がなければ付けた面の向き = 親から離れる向き)に、0〜1マス分だけスライドする
       const [dx, dy, dz] = FACE_DIR[pistonDirection(b)];
@@ -130,7 +154,37 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
     jointBlockIds.push(b.id);
   }
 
-  return { blueprint: bp, bodies, joints, jointBlockIds, pistons, pistonBlockIds, segmentOf, localOffsets };
+  return { blueprint: bp, bodies, joints, jointBlockIds, pistons, pistonBlockIds, springs, floats, segmentOf, localOffsets };
+}
+
+/** 円柱(Rapier では軸がローカルの Y)を、指定した軸の向きに回す */
+/** √(1/2) */
+const H = 0.7071067811865476;
+const CYLINDER_ROTATION: Record<Axis, { x: number; y: number; z: number; w: number }> = {
+  x: { x: 0, y: 0, z: -H, w: H },
+  y: { x: 0, y: 0, z: 0, w: 1 },
+  z: { x: H, y: 0, z: 0, w: H },
+};
+
+/**
+ * ブロックごとの力をかける(物理ステップの直前に毎回呼ぶ)。いまは浮力ブロックの上向きの力だけ。
+ * Rapier の力は呼ぶまで残り続け、かけた位置もワールド座標で固定されるので、毎ステップかけ直す
+ */
+export function applyBlockForces(creature: Creature): void {
+  if (creature.floats.length === 0) return;
+  const reset = new Set<number>();
+  for (const f of creature.floats) {
+    const body = creature.bodies[f.body];
+    if (!reset.has(f.body)) {
+      // 力とトルクは別々に残るので、両方を消してからかけ直す
+      body.resetForces(true);
+      body.resetTorques(true);
+      reset.add(f.body);
+    }
+    const t = body.translation();
+    const [x, y, z] = rotate(body.rotation(), f.local[0], f.local[1], f.local[2]);
+    body.addForceAtPoint({ x: 0, y: FLOAT_BLOCK.lift, z: 0 }, { x: t.x + x, y: t.y + y, z: t.z + z }, true);
+  }
 }
 
 /** 動かせるブロックの数(関節 + ピストン) */

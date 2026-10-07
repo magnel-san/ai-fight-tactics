@@ -5,6 +5,7 @@ import { MILESTONE, PHYSICS, POSTURE, SENSOR } from '../config';
 import { cos } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
+import { applyBlockForces } from '../creature/assemble';
 import type { Fighter } from '../sim/fighter';
 import type { Stage } from '../stage/stage';
 
@@ -96,6 +97,8 @@ export abstract class EpisodeBase implements Episode {
       this.think();
       if (this.finished) return;
     }
+    // 浮力ブロックなど、ブロックごとの力は毎ステップかけ直す
+    for (const f of this.fighters) applyBlockForces(f.creature);
     this.world.step();
     this.step++;
   }

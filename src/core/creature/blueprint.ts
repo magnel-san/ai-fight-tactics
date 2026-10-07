@@ -1,7 +1,7 @@
 // キャラの設計図(仕様書セクション4・12)。
 // コアを根とする木構造で、各ブロックは親ブロックのどの面に付くかだけを持つ。
 // 位置はすべてコア基準の整数格子座標で、関節が0°のときの姿勢を表す。
-import { BLOCKS, CREATURE, type BlockType } from '../config';
+import { BLOCK_OPTIONS, BLOCKS, CREATURE, type BlockShape, type BlockType } from '../config';
 
 export type Face = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
 export type Axis = 'x' | 'y' | 'z';
@@ -17,6 +17,32 @@ export interface BlockSpec {
   axis?: Axis;
   /** ピストンの伸びる向き(ピストンのみ。コア基準。省略時は付けた面の向き = 親から離れる向き) */
   dir?: Face;
+  /** 形(省略時は立方体) */
+  shape?: BlockShape;
+  /** 摩擦オン(省略時はオフ)。摩擦が大きく踏ん張れる。コストが増える */
+  grip?: boolean;
+}
+
+export const SHAPES: readonly BlockShape[] = ['cube', 'sphere', 'cylinder'];
+
+/** ブロックの形(省略時は立方体) */
+export function shapeOf(b: BlockSpec): BlockShape {
+  return b.shape ?? 'cube';
+}
+
+/** 1つのブロックのコスト(摩擦オンなら追加のコスト) */
+export function blockCost(b: BlockSpec): number {
+  return BLOCKS[b.type].cost + (b.grip ? BLOCK_OPTIONS.gripCost : 0);
+}
+
+/**
+ * 円柱の軸の向き。関節は回転軸(車輪になる)、ピストンは伸びる向き、
+ * ほかのブロックは付けた面の向き(コアは上下)
+ */
+export function cylinderAxis(b: BlockSpec): Axis {
+  if (b.type === 'joint' && b.axis) return b.axis;
+  const f = b.type === 'piston' && b.face ? pistonDirection(b) : b.face;
+  return f ? (f[1] as Axis) : 'y';
 }
 
 export interface Blueprint {
@@ -51,7 +77,7 @@ export function pistonDirection(b: BlockSpec): Face {
 }
 
 export function totalCost(bp: Blueprint): number {
-  return bp.blocks.reduce((sum, b) => sum + BLOCKS[b.type].cost, 0);
+  return bp.blocks.reduce((sum, b) => sum + blockCost(b), 0);
 }
 
 export function jointCount(bp: Blueprint): number {
@@ -67,9 +93,14 @@ export function actuatorCount(bp: Blueprint): number {
   return jointCount(bp) + pistonCount(bp);
 }
 
-/** 動かせるブロックか(体をここで別の剛体に分ける) */
+/** 動かせるブロックか(脳の出力で動かす) */
 export function isActuator(type: BlockSpec['type']): boolean {
   return type === 'joint' || type === 'piston';
+}
+
+/** 体をここで別の剛体に分けるブロックか(動かせるブロックと、ばねでつながる弾力ブロック) */
+export function isSegmentRoot(type: BlockSpec['type']): boolean {
+  return isActuator(type) || type === 'bouncy';
 }
 
 /**
@@ -154,6 +185,8 @@ export function validate(bp: Blueprint): string[] {
     if (b.type !== 'joint' && b.axis !== undefined) {
       errors.push(`関節以外のブロック${i}に回転軸が指定されています`);
     }
+    if (b.shape !== undefined && !SHAPES.includes(b.shape)) errors.push(`ブロック${i}の形が不正です:${b.shape}`);
+    if (b.grip !== undefined && typeof b.grip !== 'boolean') errors.push(`ブロック${i}の摩擦の設定が不正です`);
   });
 
   if (structureOk) {
@@ -171,8 +204,8 @@ export function validate(bp: Blueprint): string[] {
 
 /**
  * 剛体(セグメント)への分割。
- * 関節・ピストンのブロックを挟まずにつながったブロックは1つの剛体にまとめる。
- * 関節・ピストンのブロック自身は子側の剛体の根になり、親側の剛体とはヒンジ(関節)かスライド(ピストン)でつながる。
+ * 関節・ピストン・弾力のブロックを挟まずにつながったブロックは1つの剛体にまとめる。
+ * 関節・ピストン・弾力のブロック自身は子側の剛体の根になり、親側の剛体とはヒンジ(関節)かスライド(ピストン・弾力のばね)でつながる。
  */
 export interface Segment {
   /** この剛体の根のブロックID(コアまたは関節ブロック) */
@@ -185,7 +218,7 @@ export function segmentsOf(bp: Blueprint): { segments: Segment[]; segmentOf: num
   const segments: Segment[] = [];
   const segmentOf: number[] = [];
   for (const b of bp.blocks) {
-    if (b.parent === null || isActuator(b.type)) {
+    if (b.parent === null || isSegmentRoot(b.type)) {
       segmentOf.push(segments.length);
       segments.push({ root: b.id, blocks: [b.id] });
     } else {

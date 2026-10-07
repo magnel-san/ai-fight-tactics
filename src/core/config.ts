@@ -2,8 +2,8 @@
 // 数値はすべて仮の初期値。コード中に直書きせず、必ずここから参照すること。
 
 export const CREATURE = {
-  /** 総コスト上限 */
-  maxCost: 30,
+  /** 総コスト上限(ブロックの種類と形が増えたので30から40にした) */
+  maxCost: 40,
   /** 関節の最大数(脳の入出力サイズを抑えるため) */
   /** 関節とピストン(動かせるブロック)の合計の最大数(脳の入出力サイズを抑えるため) */
   maxJoints: 8,
@@ -48,20 +48,54 @@ export const CREATURE = {
   coreAngularDamping: 0,
 } as const;
 
-export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'grip' | 'piston' | 'sensor';
+/**
+ * ブロックの種類。グリップブロックは廃止し、どのブロックにも付けられる「摩擦オン」(BLOCK_OPTIONS)に置き換えた
+ * (古いデータのグリップは、読み込むときに「基礎 + 摩擦オン」に変換する。コスト・重さ・摩擦は同じ)
+ */
+export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'piston' | 'sensor' | 'cloud' | 'float';
 
-export const BLOCKS: Record<
-  BlockType,
-  { cost: number; mass: number; friction: number; restitution: number }
-> = {
+/** ブロックの形。重さはどの形でも同じ */
+export type BlockShape = 'cube' | 'sphere' | 'cylinder';
+
+export const BLOCKS: Record<BlockType, { cost: number; mass: number; friction: number; restitution: number }> = {
   core: { cost: 0, mass: 2.0, friction: 0.8, restitution: 0.1 },
   base: { cost: 1, mass: 1.0, friction: 0.8, restitution: 0.1 },
   joint: { cost: 3, mass: 0.5, friction: 0.8, restitution: 0.1 },
   bouncy: { cost: 2, mass: 0.8, friction: 0.8, restitution: 0.9 },
-  grip: { cost: 2, mass: 1.0, friction: 2.0, restitution: 0.1 },
   piston: { cost: 3, mass: 0.6, friction: 0.8, restitution: 0.1 },
   sensor: { cost: 1, mass: 0.5, friction: 0.8, restitution: 0.1 },
+  /** 雲:とても軽い。体を大きくしても重くならない(そのぶん押されると飛ばされやすい) */
+  cloud: { cost: 1, mass: 0.15, friction: 0.8, restitution: 0.1 },
+  /** 浮力:上向きの力が少しかかる(FLOAT_BLOCK) */
+  float: { cost: 2, mass: 1.0, friction: 0.8, restitution: 0.1 },
 };
+
+/** どのブロックにも付けられる設定 */
+export const BLOCK_OPTIONS = {
+  /** 摩擦オンにしたときの摩擦係数(相手と平均せず大きい方を使う)と、追加のコスト */
+  gripFriction: 2.0,
+  gripCost: 1,
+} as const;
+
+/**
+ * 浮力ブロック:ブロックの位置に上向きの力をかける [N]。
+ * 自分の重さ(1.0kg × 9.81 = 約9.8N)より小さくして、浮力ブロックだけでキャラが空に浮かないようにする
+ */
+export const FLOAT_BLOCK = {
+  lift: 6,
+} as const;
+
+/**
+ * 弾力ブロック:親のブロックと、付けた面の向きに伸び縮みするばねでつなぐ(脳では動かさない)。
+ * 当たると縮み、跳ね返して相手を弾く。縮む量・伸びる量 [m]、ばね定数 [N/m]、減衰 [N·s/m]、力の上限 [N]
+ */
+export const BOUNCY_SPRING = {
+  compress: 0.15,
+  stretch: 0.1,
+  stiffness: 600,
+  damping: 6,
+  maxForce: 400,
+} as const;
 
 export const PHYSICS = {
   /** 固定タイムステップ [s] */

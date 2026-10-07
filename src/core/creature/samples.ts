@@ -11,13 +11,13 @@ export const QUADRUPED: Blueprint = {
     { id: 1, type: 'base', parent: 0, face: '+z' },
     { id: 2, type: 'base', parent: 0, face: '-z' },
     { id: 3, type: 'joint', parent: 1, face: '+x', axis: 'x' },
-    { id: 4, type: 'grip', parent: 3, face: '-y' },
+    { id: 4, type: 'base', parent: 3, face: '-y', grip: true },
     { id: 5, type: 'joint', parent: 1, face: '-x', axis: 'x' },
-    { id: 6, type: 'grip', parent: 5, face: '-y' },
+    { id: 6, type: 'base', parent: 5, face: '-y', grip: true },
     { id: 7, type: 'joint', parent: 2, face: '+x', axis: 'x' },
-    { id: 8, type: 'grip', parent: 7, face: '-y' },
+    { id: 8, type: 'base', parent: 7, face: '-y', grip: true },
     { id: 9, type: 'joint', parent: 2, face: '-x', axis: 'x' },
-    { id: 10, type: 'grip', parent: 9, face: '-y' },
+    { id: 10, type: 'base', parent: 9, face: '-y', grip: true },
   ],
 };
 
@@ -27,9 +27,9 @@ export const CRAWLER: Blueprint = {
     { id: 0, type: 'core', parent: null },
     { id: 1, type: 'base', parent: 0, face: '-z' },
     { id: 2, type: 'joint', parent: 0, face: '+x', axis: 'y' },
-    { id: 3, type: 'grip', parent: 2, face: '+x' },
+    { id: 3, type: 'base', parent: 2, face: '+x', grip: true },
     { id: 4, type: 'joint', parent: 0, face: '-x', axis: 'y' },
-    { id: 5, type: 'grip', parent: 4, face: '-x' },
+    { id: 5, type: 'base', parent: 4, face: '-x', grip: true },
   ],
 };
 
@@ -44,7 +44,7 @@ export const SNAKE: Blueprint = {
     { id: 5, type: 'joint', parent: 4, face: '-z', axis: 'y' },
     { id: 6, type: 'base', parent: 5, face: '-z' },
     { id: 7, type: 'joint', parent: 6, face: '-z', axis: 'y' },
-    { id: 8, type: 'grip', parent: 7, face: '-z' },
+    { id: 8, type: 'base', parent: 7, face: '-z', grip: true },
   ],
 };
 
@@ -63,9 +63,9 @@ export const BIPED: Blueprint = {
   blocks: [
     { id: 0, type: 'core', parent: null },
     { id: 1, type: 'joint', parent: 0, face: '+x', axis: 'x' },
-    { id: 2, type: 'grip', parent: 1, face: '-y' },
+    { id: 2, type: 'base', parent: 1, face: '-y', grip: true },
     { id: 3, type: 'joint', parent: 0, face: '-x', axis: 'x' },
-    { id: 4, type: 'grip', parent: 3, face: '-y' },
+    { id: 4, type: 'base', parent: 3, face: '-y', grip: true },
   ],
 };
 

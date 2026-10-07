@@ -1,19 +1,20 @@
 // キャラの見た目。剛体ごとにグループを作り、毎フレーム剛体の位置・回転を写す。
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { BlockType } from '../core/config';
 import { CREATURE } from '../core/config';
 import { pistonStates, type Creature } from '../core/creature/assemble';
-import { FACE_DIR, pistonDirection } from '../core/creature/blueprint';
+import { FACE_DIR, pistonDirection, shapeOf } from '../core/creature/blueprint';
+import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh } from './blockShapes';
 
 export const BLOCK_COLORS: Record<BlockType, number> = {
   core: 0xf2c94c,
   base: 0x9aa5b1,
   joint: 0x56ccf2,
   bouncy: 0xeb5757,
-  grip: 0x6fcf97,
   piston: 0xc58b4a,
   sensor: 0xbb6bd9,
+  cloud: 0xf4f7fb,
+  float: 0x7fd8e8,
 };
 
 export interface CreatureMesh {
@@ -45,8 +46,9 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
 
   // 見た目は物理のコライダーより少しだけ小さくして、ブロックの境目が分かるようにする
   const size = CREATURE.blockSize - CREATURE.colliderShrink * 2;
-  // 当たり判定と同じく角を丸める
-  const geometry = new RoundedBoxGeometry(size, size, size, 2, CREATURE.blockRoundness);
+  // 形ごとの形状(当たり判定と同じ大きさ・向き)
+  const geometries = new BlockGeometries(size);
+  const grip = gripMaterial({ ghost: opts.ghost });
   const materials = new Map<BlockType, THREE.MeshStandardMaterial>();
   const material = (type: BlockType) => {
     let m = materials.get(type);
@@ -65,12 +67,21 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
 
   // ピストンの棒:伸びた分だけ、ピストンブロックの後ろ(伸びる向きの反対側)に見える。縮んでいるときは長さ0
   const rodGeometry = new THREE.BoxGeometry(size * 0.35, size * 0.35, 1);
-  const rodMaterial = new THREE.MeshStandardMaterial({ color: 0x8a8f99, metalness: 0.6, roughness: 0.4, transparent: opts.ghost ?? false, opacity: opts.ghost ? 0.22 : 1 });
+  const rodMaterial = new THREE.MeshStandardMaterial({
+    color: 0x8a8f99,
+    metalness: 0.6,
+    roughness: 0.4,
+    transparent: opts.ghost ?? false,
+    opacity: opts.ghost ? 0.22 : 1,
+  });
 
   const rodByBlock = new Map<number, CreatureMesh['rods'][number]>();
   creature.blueprint.blocks.forEach((b, i) => {
+    const geometry = geometries.get(shapeOf(b));
     const mesh = new THREE.Mesh(geometry, material(b.type));
     mesh.position.set(...creature.localOffsets[i]);
+    orientBlockMesh(mesh, b);
+    if (b.grip) mesh.add(gripOverlay(geometry, grip));
     mesh.castShadow = !opts.ghost;
     groups[creature.segmentOf[i]].add(mesh);
     if (b.type === 'piston') {
@@ -104,7 +115,8 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
     root,
     groups,
     dispose() {
-      geometry.dispose();
+      geometries.dispose();
+      grip.dispose();
       rodGeometry.dispose();
       rodMaterial.dispose();
       markGeometry.dispose();

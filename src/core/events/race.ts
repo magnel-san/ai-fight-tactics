@@ -5,6 +5,7 @@ import type { World } from '@dimforge/rapier3d-compat';
 import { PHYSICS, RACE } from '../config';
 import { Rng } from '../math/rng';
 import type { Rapier } from '../physics/rapier';
+import { applyBlockForces } from '../creature/assemble';
 import { Fighter } from '../sim/fighter';
 import type { Episode, EpisodeOutcome } from '../training/episode';
 import { addFlatGround, spawnHeight } from '../training/move';
@@ -75,6 +76,8 @@ export class RaceEpisode implements Episode {
         f.drive(t);
       });
     }
+    // 浮力ブロックなど、ブロックごとの力は毎ステップかけ直す
+    for (const f of this.fighters) applyBlockForces(f.creature);
     for (const w of this.worlds) w.step();
     this.step++;
     this.fighters.forEach((f, i) => {

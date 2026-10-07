@@ -1,7 +1,18 @@
 // キャラクリエイト画面(仕様書セクション4)
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BLOCKS, CREATURE, type BlockType } from '../../core/config';
-import { blockPositions, centerOfMass, jointCount, oppositeFace, pistonDirection, totalCost, type Axis, type Blueprint, type Face } from '../../core/creature/blueprint';
+import { BLOCK_OPTIONS, BLOCKS, CREATURE, type BlockShape, type BlockType } from '../../core/config';
+import {
+  actuatorCount,
+  blockPositions,
+  centerOfMass,
+  oppositeFace,
+  pistonDirection,
+  shapeOf,
+  totalCost,
+  type Axis,
+  type Blueprint,
+  type Face,
+} from '../../core/creature/blueprint';
 import {
   addBlock,
   addBlockSymmetric,
@@ -13,6 +24,8 @@ import {
   removeBlockSymmetric,
   setJointAxis,
   setJointAxisSymmetric,
+  setBlockLook,
+  setBlockLookSymmetric,
   setPistonDir,
   setPistonDirSymmetric,
   type EditResult,
@@ -21,13 +34,20 @@ import { QUADRUPED } from '../../core/creature/samples';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
 import { EditorView } from './EditorView';
 
-const PALETTE: { type: Exclude<BlockType, 'core'>; label: string; note: string }[] = [
-  { type: 'base', label: '基礎', note: '標準的な摩擦と反発' },
-  { type: 'joint', label: '関節', note: '脳で動かせるヒンジ(±90°)' },
-  { type: 'bouncy', label: '弾力', note: '当たった相手を弾き飛ばす' },
-  { type: 'grip', label: 'グリップ', note: '摩擦が大きく踏ん張れる' },
-  { type: 'piston', label: 'ピストン', note: '付けた面の向きに1マス伸び縮みする(ジャンプや押し出しに)' },
+export const PALETTE: { type: Exclude<BlockType, 'core'>; label: string; note: string }[] = [
+  { type: 'base', label: '基礎', note: '標準的な重さ・摩擦・反発のブロック' },
+  { type: 'joint', label: '関節', note: '脳で動かせるヒンジ(±90°)。円柱にすると車輪になる' },
+  { type: 'piston', label: 'ピストン', note: '1マス伸び縮みする(ジャンプや押し出しに)' },
+  { type: 'bouncy', label: '弾力', note: 'ばねで伸び縮みし、当たった相手を弾き飛ばす' },
+  { type: 'cloud', label: '雲', note: 'とても軽い。体を大きくしても重くならない(押されると飛ばされやすい)' },
+  { type: 'float', label: '浮力', note: '上向きの力が少しかかる(体が軽くなる。浮き上がるほどではない)' },
   { type: 'sensor', label: 'センサー', note: 'トレーニング中に地面に触れると減点(倒れにくい動きを学ばせる。バトルでは普通のブロック)' },
+];
+
+export const SHAPE_LABELS: { shape: BlockShape; label: string; note: string }[] = [
+  { shape: 'cube', label: '立方体', note: '安定して置ける' },
+  { shape: 'sphere', label: '球', note: '転がりやすく、引っかかりにくい' },
+  { shape: 'cylinder', label: '円柱', note: '関節なら回転軸の向き(車輪)、ピストンなら伸びる向き、ほかは付けた面の向きが軸になる' },
 ];
 
 const AXES: { axis: Axis; label: string }[] = [
@@ -71,6 +91,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   /** 置くピストンの伸びる向き('face' = 付けた面の向き) */
   const [pistonDir, setPistonDirChoice] = useState<Face | 'face'>('face');
   const [symmetric, setSymmetric] = useState(true);
+  /** 置くブロックの形と摩擦 */
+  const [shape, setShape] = useState<BlockShape>('cube');
+  const [grip, setGrip] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
   /** 右クリックで選んだブロック */
   const [selected, setSelected] = useState<number | null>(null);
@@ -80,8 +103,8 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   const [, forceRender] = useState(0);
 
   // イベントハンドラから常に最新の値を読むための参照
-  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir });
-  latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir };
+  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir, shape, grip });
+  latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir, shape, grip };
 
   const commit = useCallback(
     (result: EditResult) => {
@@ -120,19 +143,21 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => {
     const view = new EditorView(canvasRef.current!, {
       getPlacement(parent, face) {
-        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd } = latest.current;
+        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd, shape: sh, grip: g } = latest.current;
         const dir = pd === 'face' ? undefined : pd;
-        const result = sym ? addBlockSymmetric(bp, parent, face, t, a, dir) : addBlock(bp, parent, face, t, a, dir);
+        const look = { shape: sh, grip: g };
+        const result = sym ? addBlockSymmetric(bp, parent, face, t, a, dir, look) : addBlock(bp, parent, face, t, a, dir, look);
         const target = cellOnFace(bp, parent, face);
         if (!result.ok) return { cells: [target], ok: false };
-        // 追加された分のブロックの位置を表示する
+        // 追加された分のブロックの位置と形を表示する
         const pos = blockPositions(result.blueprint);
-        return { cells: pos.slice(bp.blocks.length), ok: true };
+        return { cells: pos.slice(bp.blocks.length), blocks: result.blueprint.blocks.slice(bp.blocks.length), ok: true };
       },
       onPlace(parent, face) {
-        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd } = latest.current;
+        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd, shape: sh, grip: g } = latest.current;
         const dir = pd === 'face' ? undefined : pd;
-        commit(sym ? addBlockSymmetric(bp, parent, face, t, a, dir) : addBlock(bp, parent, face, t, a, dir));
+        const look = { shape: sh, grip: g };
+        commit(sym ? addBlockSymmetric(bp, parent, face, t, a, dir, look) : addBlock(bp, parent, face, t, a, dir, look));
       },
       onHover: setHovered,
       onSelect: setSelected,
@@ -150,7 +175,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => setSelected(null), [blueprint.blocks.length]);
   useEffect(() => viewRef.current?.setSymmetric(symmetric), [symmetric]);
   useEffect(() => viewRef.current?.setGhostType(type), [type]);
-  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric, pistonDir]);
+  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric, pistonDir, shape, grip]);
 
   // キーボード操作
   useEffect(() => {
@@ -177,7 +202,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
       } else if (key === 'r' && h !== null && bp.blocks[h]?.type === 'joint') {
         const next = NEXT_AXIS[bp.blocks[h].axis!];
         commit(sym ? setJointAxisSymmetric(bp, h, next) : setJointAxis(bp, h, next));
-      } else if (['1', '2', '3', '4', '5', '6'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
+      } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= PALETTE.length && !e.ctrlKey && !e.metaKey) {
         setType(PALETTE[Number(e.key) - 1].type);
       }
     };
@@ -188,7 +213,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   const replaceAll = (bp: Blueprint) => commit({ ok: true, blueprint: bp, notes: [] });
 
   const cost = totalCost(blueprint);
-  const joints = jointCount(blueprint);
+  const joints = actuatorCount(blueprint);
   const com = centerOfMass(blueprint);
   const hoveredBlock = hovered !== null ? blueprint.blocks[hovered] : undefined;
   const selectedBlock = selected !== null ? blueprint.blocks[selected] : undefined;
@@ -205,12 +230,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         <h2>ブロック</h2>
         <div className="palette">
           {PALETTE.map((p, i) => (
-            <button
-              key={p.type}
-              className={`block-button${type === p.type ? ' selected' : ''}`}
-              onClick={() => setType(p.type)}
-              title={p.note}
-            >
+            <button key={p.type} className={`block-button${type === p.type ? ' selected' : ''}`} onClick={() => setType(p.type)} title={p.note}>
               <span className="swatch" style={{ background: hex(BLOCK_COLORS[p.type]) }} />
               <span className="name">
                 {i + 1}. {p.label}
@@ -219,6 +239,19 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
             </button>
           ))}
         </div>
+
+        <h3>形</h3>
+        <div className="segmented">
+          {SHAPE_LABELS.map((x) => (
+            <button key={x.shape} className={shape === x.shape ? 'selected' : ''} onClick={() => setShape(x.shape)} title={x.note}>
+              {x.label}
+            </button>
+          ))}
+        </div>
+        <label className="toggle" title={`摩擦が大きく、踏ん張れる・滑りにくい(コスト+${BLOCK_OPTIONS.gripCost})`}>
+          <input type="checkbox" checked={grip} onChange={(e) => setGrip(e.target.checked)} />
+          摩擦オン(コスト+{BLOCK_OPTIONS.gripCost})
+        </label>
 
         {type === 'joint' && (
           <>
@@ -277,6 +310,34 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
                 })}
               </div>
             )}
+            <div className="segmented">
+              {SHAPE_LABELS.map((x) => (
+                <button
+                  key={x.shape}
+                  className={shapeOf(selectedBlock) === x.shape ? 'selected' : ''}
+                  title={x.note}
+                  onClick={() =>
+                    commit(symmetric ? setBlockLookSymmetric(blueprint, selected!, { shape: x.shape }) : setBlockLook(blueprint, selected!, { shape: x.shape }))
+                  }
+                >
+                  {x.label}
+                </button>
+              ))}
+            </div>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={!!selectedBlock.grip}
+                onChange={(e) =>
+                  commit(
+                    symmetric
+                      ? setBlockLookSymmetric(blueprint, selected!, { grip: e.target.checked })
+                      : setBlockLook(blueprint, selected!, { grip: e.target.checked }),
+                  )
+                }
+              />
+              摩擦オン(コスト+{BLOCK_OPTIONS.gripCost})
+            </label>
             {selectedBlock.type === 'joint' && (
               <div className="segmented">
                 {AXES.map((a) => (
@@ -291,7 +352,12 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
               </div>
             )}
             <div className="row">
-              <button className="danger" onClick={removeSelected} disabled={selectedBlock.type === 'core'} title="このブロックと、その先につながるブロックを削除します">
+              <button
+                className="danger"
+                onClick={removeSelected}
+                disabled={selectedBlock.type === 'core'}
+                title="このブロックと、その先につながるブロックを削除します"
+              >
                 削除{symmetric ? '(左右とも)' : ''}
               </button>
               <button onClick={() => setSelected(null)}>選択を解除</button>
@@ -308,7 +374,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
             {cost} / {CREATURE.maxCost}
             <meter min={0} max={CREATURE.maxCost} value={cost} />
           </dd>
-          <dt>関節</dt>
+          <dt>関節・ピストン</dt>
           <dd>
             {joints} / {CREATURE.maxJoints}
           </dd>
@@ -347,7 +413,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           <li>Delete:選択中のブロックとその先を削除(選択がなければマウスの下のブロック)</li>
           <li>R:選択中(またはマウスの下)の関節の軸を切り替え</li>
           <li>Ctrl+Z / Ctrl+Y:取り消し / やり直し</li>
-          <li>1〜6:ブロックの種類を選ぶ</li>
+          <li>1〜{PALETTE.length}:ブロックの種類を選ぶ</li>
         </ul>
       </aside>
 

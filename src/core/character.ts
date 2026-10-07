@@ -1,6 +1,6 @@
 // キャラ1体分のデータ(仕様書セクション12):設計図 + 2つの脳 + 育成状況。
 import type { Blueprint } from './creature/blueprint';
-import type { TaskName } from './training/tasks';
+import type { FighterData, TaskName } from './training/tasks';
 
 export interface Progress {
   /** 合格したメニュー */
@@ -27,6 +27,28 @@ export interface Character {
 
 /** 運動脳を鍛えるメニュー(体を組み直すと合格が取り消される) */
 export const MOTOR_TASKS: readonly TaskName[] = ['move', 'chase', 'jump', 'holes'];
+
+/**
+ * 種目・トーナメント・ランダムマッチに出るために合格が必要なトレーニング(「2. 対象を追う」)。
+ * 指令の方向へまっすぐ進めないと、競技にならないため
+ */
+export const ENTRY_REQUIRED_TASK: TaskName = 'chase';
+
+/** 種目・トーナメント・ランダムマッチに出られるか */
+export function canEnter(c: Character): boolean {
+  return !!c.motor && c.progress.passed.includes(ENTRY_REQUIRED_TASK);
+}
+
+/**
+ * バトルに出すときのデータ。判断脳があればそれで戦い、なければ相手に向かって突進する(突進BOTと同じ作戦)。
+ * 運動脳がなければ出られない(null)
+ */
+export function battleFighter(c: Pick<Character, 'blueprint' | 'motor' | 'decision'>): FighterData | null {
+  if (!c.motor) return null;
+  return c.decision
+    ? { blueprint: c.blueprint, motor: c.motor, decision: c.decision, controller: 'brain' }
+    : { blueprint: c.blueprint, motor: c.motor, decision: null, controller: 'rush' };
+}
 
 export function newCharacter(name: string, blueprint: Blueprint): Character {
   return { name, blueprint, motor: null, decision: null, progress: { passed: [], generations: {} } };

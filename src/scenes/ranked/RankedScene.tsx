@@ -2,7 +2,7 @@
 // トーナメントは時刻と登録内容だけで決まるので、どのブラウザでも同じ試合が同じ時刻に流れる。
 // 試合は Worker で計算して結果を報告し、配信はメインスレッドで同じ試合を再現して、時刻に合わせて途中から映す。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Character } from '../../core/character';
+import { canEnter, type Character } from '../../core/character';
 import { BATTLE, PHYSICS, RACE, RANKED } from '../../core/config';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import type { RaceRecord } from '../../core/ranked/run';
@@ -512,7 +512,7 @@ export function RankedScene({ charId, character, active }: Props) {
   };
   const myEntry = me ? latestByOwner.get(me) : undefined;
   const myName = me ? players.get(me) : undefined;
-  const ready = !!character.motor && !!character.decision;
+  const ready = canEnter(character);
 
   const bracketView = (lt: LiveTournament, highlight: number | null, replayable: boolean) => {
     const rounds = lt.matches.length ? lt.matches[lt.matches.length - 1].round + 1 : 0;
@@ -713,7 +713,10 @@ export function RankedScene({ charId, character, active }: Props) {
               </button>
             </div>
             {!myName && <p className="message">先にプレイヤー名を登録してください</p>}
-            {!ready && <p className="message">運動脳と判断脳を鍛えたキャラだけ登録できます</p>}
+            {!ready && <p className="message">トレーニング「2. 対象を追う」に合格したキャラだけ登録できます</p>}
+            {ready && !character.decision && (
+              <p className="muted small">判断脳をまだ鍛えていないので、バトルでは相手に向かって突進します(トレーニング「危険なタイルを避ける」以降で判断脳を鍛えると、作戦を考えて戦います)</p>
+            )}
             <p className="muted small">
               {RANKED.interval / 60}
               分ごとに、登録されたモンスターからトーナメント(最大

@@ -1,16 +1,31 @@
 // キャラクリエイト画面の3D表示と、マウスによる操作。
 // 設計図を物理なしでそのまま格子に並べて表示する(関節はすべて0°の姿勢)。
 // 左クリックで面に配置、右ドラッグでカメラ回転、ホイールでズーム。
+// 置く面は格子(立方体)で決めるので、当たり判定は見えない立方体で行い、見た目だけをブロックの形(球・円柱)にする。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh } from '../../render/blockShapes';
 import { CREATURE, type BlockType } from '../../core/config';
-import { AXIS_DIR, blockPositions, centerOfMass, FACE_DIR, pistonDirection, type Blueprint, type Face, type Vec3i } from '../../core/creature/blueprint';
+import {
+  AXIS_DIR,
+  blockPositions,
+  centerOfMass,
+  FACE_DIR,
+  pistonDirection,
+  shapeOf,
+  type BlockSpec,
+  type Blueprint,
+  type Face,
+  type Vec3i,
+} from '../../core/creature/blueprint';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
 
 export interface Placement {
   /** 置かれる格子座標(左右対称なら2つ) */
   cells: Vec3i[];
+  /** 置かれるブロック(cells と同じ並び。置けないときは省略) */
+  blocks?: BlockSpec[];
   ok: boolean;
 }
 
@@ -55,7 +70,12 @@ export class EditorView {
   private grid: THREE.GridHelper;
   /** 床に置く「正面」の矢印。コアの正面マークがブロックに隠れても向きが分かるようにする */
   private frontArrow: THREE.Mesh;
+  /** 当たり判定用の見えない立方体 */
   private blockGeometry = new RoundedBoxGeometry(SIZE * 0.98, SIZE * 0.98, SIZE * 0.98, 2, CREATURE.blockRoundness);
+  private pickMaterial = new THREE.MeshBasicMaterial({ visible: false });
+  /** 見た目の形 */
+  private shapes = new BlockGeometries(SIZE * 0.98);
+  private gripMat = gripMaterial();
   private axisGeometry = new THREE.CylinderGeometry(0.025, 0.025, SIZE * 1.3, 8);
   private axisMaterial = new THREE.MeshBasicMaterial({ color: 0x0b3954 });
   /** ピストンの伸びる向きの印 */
@@ -184,11 +204,12 @@ export class EditorView {
 
     const pos = blockPositions(bp);
     bp.blocks.forEach((b, i) => {
-      const mesh = new THREE.Mesh(this.blockGeometry, this.material(b.type));
+      const mesh = new THREE.Mesh(this.blockGeometry, this.pickMaterial);
       mesh.position.set(pos[i][0] * SIZE, pos[i][1] * SIZE, pos[i][2] * SIZE);
       mesh.userData.blockId = i;
       this.blocksGroup.add(mesh);
       this.blockMeshes.push(mesh);
+      mesh.add(this.shapeMesh(b));
       if (b.type === 'joint') mesh.add(this.axisIndicator(AXIS_DIR[b.axis!]));
       if (b.type === 'piston') {
         // 伸びる向きに、ブロックから少し突き出た棒を出す
@@ -257,6 +278,9 @@ export class EditorView {
     this.clearGhost();
     for (const d of this.disposables) d.dispose();
     for (const m of this.materials.values()) m.dispose();
+    this.shapes.dispose();
+    this.gripMat.dispose();
+    this.pickMaterial.dispose();
     this.controls.dispose();
     this.renderer.dispose();
   }
@@ -268,6 +292,20 @@ export class EditorView {
       this.materials.set(type, m);
     }
     return m;
+  }
+
+  /** ブロックの見た目(形・色・摩擦オンの網目)。当たり判定はしない */
+  private shapeMesh(b: BlockSpec): THREE.Mesh {
+    const geometry = this.shapes.get(shapeOf(b));
+    const mesh = new THREE.Mesh(geometry, this.material(b.type));
+    orientBlockMesh(mesh, b);
+    mesh.raycast = () => {};
+    if (b.grip) {
+      const g = gripOverlay(geometry, this.gripMat);
+      g.raycast = () => {};
+      mesh.add(g);
+    }
+    return mesh;
   }
 
   private axisIndicator(dir: Vec3i): THREE.Mesh {
@@ -386,8 +424,10 @@ export class EditorView {
         opacity: 0.45,
         depthWrite: false,
       });
-      const ghost = new THREE.Mesh(this.blockGeometry, material);
+      const spec = placement.blocks?.[placement.cells.indexOf(cell)];
+      const ghost = new THREE.Mesh(spec ? this.shapes.get(shapeOf(spec)) : this.blockGeometry, material);
       ghost.position.set(cell[0] * SIZE, cell[1] * SIZE, cell[2] * SIZE);
+      if (spec) orientBlockMesh(ghost, spec);
       ghost.raycast = () => {};
       this.ghostGroup.add(ghost);
     }

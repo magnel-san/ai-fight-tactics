@@ -45,8 +45,8 @@ describe('設計図の編集', () => {
 
   it('コスト上限を超える追加は拒否される', () => {
     let bp = emptyBlueprint();
-    // グリップ(コスト2)を一直線に並べて上限ちょうどにする
-    while (totalCost(bp) < CREATURE.maxCost) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'grip'));
+    // 浮力(コスト2)を一直線に並べて上限ちょうどにする
+    while (totalCost(bp) < CREATURE.maxCost) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'float'));
     expect(totalCost(bp)).toBe(CREATURE.maxCost);
     const r = addBlock(bp, 0, '-x', 'base');
     expect(r.ok).toBe(false);
@@ -65,7 +65,7 @@ describe('設計図の編集', () => {
   });
 
   it('左右対称モードでは反対側にも置かれる', () => {
-    const bp = ok(addBlockSymmetric(emptyBlueprint(), 0, '+x', 'grip'));
+    const bp = ok(addBlockSymmetric(emptyBlueprint(), 0, '+x', 'base'));
     const pos = blockPositions(bp);
     expect(pos).toEqual([
       [0, 0, 0],
@@ -76,7 +76,7 @@ describe('設計図の編集', () => {
 
   it('左右対称モードで孫のブロックも反対側の対応する親に付く', () => {
     let bp = ok(addBlockSymmetric(emptyBlueprint(), 0, '+x', 'joint', 'z'));
-    bp = ok(addBlockSymmetric(bp, 1, '-y', 'grip'));
+    bp = ok(addBlockSymmetric(bp, 1, '-y', 'base'));
     expect(blockAt(bp, [1, -1, 0])).toBeDefined();
     expect(blockAt(bp, [-1, -1, 0])).toBeDefined();
     expect(bp.blocks[blockAt(bp, [-1, -1, 0])!].parent).toBe(2);
@@ -98,7 +98,7 @@ describe('設計図の編集', () => {
   it('左右対称に置くとコスト上限を超える場合は拒否される', () => {
     let bp = emptyBlueprint();
     // 一直線に +z に並べてコストを上限-1にする
-    while (totalCost(bp) < CREATURE.maxCost - 2) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'grip'));
+    while (totalCost(bp) < CREATURE.maxCost - 2) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'float'));
     bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'base'));
     expect(totalCost(bp)).toBe(CREATURE.maxCost - 1);
     const r = addBlockSymmetric(bp, 0, '+x', 'base');

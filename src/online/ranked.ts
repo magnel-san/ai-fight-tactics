@@ -8,7 +8,7 @@
 //   ・登録の版のデータ(脳つきのキャラ、最大32KB)は書き換えられないので、一度取得したらブラウザに保存して二度と取得しない
 //   ・取得は自動では行わない。画面を開いたとき・トーナメントが始まったとき(出場者を決めるため)・更新ボタンを押したときだけ
 //   ・結果の報告はまとめて1回で送り、一度報告した試合はブラウザに記録して送り直さない
-import type { Character } from '../core/character';
+import { battleFighter, canEnter, type Character } from '../core/character';
 import { characterToJson, parseCharacter } from '../core/codec';
 import type { RaceRecord } from '../core/ranked/run';
 import {
@@ -266,7 +266,7 @@ export async function savePlayerName(name: string): Promise<void> {
 
 /** 登録の版を作る。同じモンスターで中身が変わっていなければ、前の版を使い回す(ランダムマッチ用の控え) */
 async function insertEntry(c: Character, monster: string, tournament: boolean): Promise<number> {
-  if (!c.motor || !c.decision) throw new Error('運動脳と判断脳を鍛えたキャラだけ登録できます');
+  if (!canEnter(c)) throw new Error(`トレーニング「2. 対象を追う」に合格したキャラだけ登録できます`);
   await ensureSession();
   const data = characterToJson({ ...c, readOnly: false });
   const json = JSON.stringify(data);
@@ -374,7 +374,7 @@ const dataCache = new Map<number, FighterData | null>();
 function toFighter(data: unknown): FighterData | null {
   try {
     const c = parseCharacter(data);
-    return c.motor && c.decision ? { blueprint: c.blueprint, motor: c.motor, decision: c.decision, controller: 'brain' } : null;
+    return battleFighter(c);
   } catch {
     return null;
   }
