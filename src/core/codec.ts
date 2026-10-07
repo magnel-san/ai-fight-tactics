@@ -8,6 +8,7 @@ import { fromF16Bits, toF16Bits } from './brain/f16';
 import { motorGenomeLength, motorShape, rhythmPeriod } from './brain/motor';
 import type { Character, Progress } from './character';
 import { actuatorCount, validate, type Blueprint, type BlockSpec } from './creature/blueprint';
+import type { ReportCard } from './training/report';
 import { TASK_ORDER, type TaskName } from './training/tasks';
 
 /**
@@ -281,6 +282,19 @@ function parseWeights(brain: BrainJson | null | undefined, length: number, label
   return w;
 }
 
+/** 成績表(数値の形だけ確かめる。壊れていたら捨てる) */
+function parseReport(v: unknown): ReportCard | undefined {
+  const num = (x: unknown) => typeof x === 'number' && Number.isFinite(x) && x >= 0;
+  const vs = (o: unknown) => {
+    const r = o as Record<string, unknown> | undefined;
+    return !!r && ['games', 'wins', 'losses', 'draws', 'pushWins', 'selfFalls'].every((k) => num(r[k]));
+  };
+  const r = v as ReportCard | undefined;
+  if (!r || !num(r.at) || !vs(r.vsRush) || !vs(r.vsStandard)) return undefined;
+  if (!r.survive || !num(r.survive.games) || !num(r.survive.survived) || !num(r.survive.meanTime)) return undefined;
+  return r;
+}
+
 /** JSON(文字列またはオブジェクト)を検証してキャラにする */
 export function parseCharacter(input: string | unknown): Character {
   const raw = typeof input === 'string' ? JSON.parse(input) : input;
@@ -300,6 +314,8 @@ export function parseCharacter(input: string | unknown): Character {
   const progress: Progress = { passed, generations };
   if (typeof p.surviveLevel === 'number') progress.surviveLevel = Math.min(5, Math.max(1, Math.floor(p.surviveLevel)));
   if (p.style === 'attack' || p.style === 'survive') progress.style = p.style;
+  const report = parseReport(p.report);
+  if (report) progress.report = report;
   if (Array.isArray(p.milestones)) progress.milestones = p.milestones.filter((m): m is string => typeof m === 'string').slice(0, 20);
   return { name, blueprint, motor, decision, progress };
 }

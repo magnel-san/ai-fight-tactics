@@ -1,6 +1,7 @@
 // キャラ1体分のデータ(仕様書セクション12):設計図 + 2つの脳 + 育成状況。
 import type { Blueprint } from './creature/blueprint';
 import type { TrainStyle } from './config';
+import type { ReportCard } from './training/report';
 import type { FighterData, TaskName } from './training/tasks';
 
 export interface Progress {
@@ -14,6 +15,8 @@ export interface Progress {
   milestones?: string[];
   /** 押し合い・ライバル練習試合の作戦タイプ(省略時はバランス) */
   style?: TrainStyle;
+  /** 最後に測った成績表 */
+  report?: ReportCard;
 }
 
 export interface Character {

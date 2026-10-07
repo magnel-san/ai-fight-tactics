@@ -938,3 +938,24 @@ button.small-button {
   border-radius: 3px;
   vertical-align: -1px;
 }
+
+/* 成績表 */
+.report-card {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.report-head h3 {
+  margin: 0;
+}
+.report-card td.warn {
+  color: var(--danger);
+  font-weight: 600;
+}

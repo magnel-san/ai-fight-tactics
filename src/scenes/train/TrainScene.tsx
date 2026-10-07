@@ -18,6 +18,9 @@ import { Trainer, type GenerationReport, type Opponent } from '../../training/Tr
 import { defaultWorkerCount } from '../../training/WorkerPool';
 import { AwayHighlights, BrainPanel, CompareView, MILESTONE_LABELS, Toasts, type AwaySummary, type Toast } from './extras';
 import { FitnessChart } from './FitnessChart';
+import { battleFighter } from '../../core/character';
+import { measureReportInWorker } from '../../training/reportClient';
+import { ReportCardView } from './ReportCardView';
 
 /** トレーニングのエピソードのリプレイ(マイルストーンの場面など) */
 export interface TrainReplay {
@@ -101,6 +104,25 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
   const [points, setPoints] = useState<Partial<Record<TaskName, HistoryPoint[]>>>({});
   const [firstChampions, setFirstChampions] = useState<Partial<Record<TaskName, Float64Array>>>({});
   const [error, setError] = useState<string | null>(null);
+  const [measuring, setMeasuring] = useState(false);
+
+  /** 成績表を測って、育成状況に保存する(判断脳がなければ突進の作戦で測る) */
+  const measure = async () => {
+    const me = battleFighter(characterRef.current);
+    const rush = opponents[0]?.data;
+    const standard = opponents[1]?.data;
+    if (!me || !rush || !standard || measuring) return;
+    setMeasuring(true);
+    try {
+      const report = await measureReportInWorker(me, rush, standard);
+      onChange((c) => ({ ...c, progress: { ...c.progress, report } }));
+    } catch (e) {
+      setError(String(e));
+    }
+    setMeasuring(false);
+  };
+  const measureRef = useRef(measure);
+  measureRef.current = measure;
   const [replayLabel, setReplayLabel] = useState('');
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [away, setAway] = useState<AwaySummary | null>(null);
@@ -385,6 +407,8 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
     });
     if (r.passed && !c.progress.passed.includes(t)) {
       setToasts((ts) => [...ts, { id: Date.now() + Math.random(), title: `「${d.label}」に合格!`, detail: r.confirm?.text ?? '' }]);
+      // 判断脳のメニューに合格したら、成績表を自動で測る(少し待って、合格した脳が保存されてから)
+      if (d.brain === 'decision') setTimeout(() => void measureRef.current(), 500);
     }
 
     setReports((h) => ({ ...h, [t]: [...(h[t] ?? []), r] }));
@@ -461,6 +485,13 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
           <div className="menu-note">{def.note}</div>
           <div className={`badge ${passed ? 'ok' : ''}`}>{passed ? '合格' : `合格条件:${def.passCondition}`}</div>
         </div>
+
+        <ReportCardView
+          report={character.progress.report}
+          measuring={measuring}
+          onMeasure={() => void measure()}
+          disabled={!character.motor || opponents.length < 2}
+        />
 
         {(task === 'push' || task === 'rival') && (
           <>

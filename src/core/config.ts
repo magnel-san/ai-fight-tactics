@@ -73,7 +73,7 @@ export const BLOCKS: Record<BlockType, { cost: number; mass: number; friction: n
   /** 雲:とても軽い。体を大きくしても重くならない(そのぶん押されると飛ばされやすい) */
   cloud: { cost: 1, mass: 0.15, friction: 0.8, restitution: 0.1 },
   /** 風:扇風機のように、吹く向きと反対向きの力が常にかかる(WIND_BLOCK) */
-  wind: { cost: 2, mass: 1.0, friction: 0.8, restitution: 0.1 },
+  wind: { cost: 3, mass: 1.0, friction: 0.8, restitution: 0.1 },
 };
 
 /** どのブロックにも付けられる設定 */
@@ -463,6 +463,13 @@ export const TRAINING = {
   reevalEpisodes: 5,
   /** 押し合いの自己対戦:この世代数ごとに、その時点の最優秀の判断脳を「過去の自分」として相手に加える */
   selfPlayInterval: 20,
+} as const;
+
+/** 成績表(src/core/training/report.ts):相手ごとの試合数・生き残りの回数・固定のシード */
+export const REPORT = {
+  matches: 8,
+  surviveRuns: 8,
+  seed: 90210,
 } as const;
 
 /** 作戦タイプ(押し合い・ライバル練習試合の報酬の重み)。数値は PUSH_TASK の各報酬にかける倍率 */
