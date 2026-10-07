@@ -1,6 +1,6 @@
-// ブロックの形・摩擦オン・雲・浮力・弾力のばねのテスト
+// ブロックの形・摩擦オン・雲・風・弾力のばねのテスト
 import { beforeAll, describe, expect, it } from 'vitest';
-import { BLOCK_OPTIONS, BLOCKS, BOUNCY_SPRING, CREATURE, PHYSICS } from '../src/core/config';
+import { BLOCK_OPTIONS, BLOCKS, BOUNCY_SPRING, CREATURE, PHYSICS, WIND_BLOCK } from '../src/core/config';
 import { applyBlockForces, spawnCreature, type Creature } from '../src/core/creature/assemble';
 import { blockCost, cylinderAxis, segmentsOf, totalCost, validate, type BlockSpec, type Blueprint } from '../src/core/creature/blueprint';
 import { addBlock, setBlockLook } from '../src/core/creature/edit';
@@ -81,22 +81,56 @@ describe('形と摩擦オン', () => {
   });
 });
 
-describe('雲・浮力・弾力', () => {
+describe('雲・風・弾力', () => {
   it('雲は基礎よりずっと軽い', () => {
     expect(BLOCKS.cloud.mass).toBeLessThan(BLOCKS.base.mass / 4);
   });
 
-  it('浮力ブロックがあると、落ちるのが遅い(でも浮き上がりはしない)', () => {
-    const base = simulate({ blocks: [core, { id: 1, type: 'base', parent: 0, face: '+y' }] }, 20, 3);
-    const float = simulate({ blocks: [core, { id: 1, type: 'float', parent: 0, face: '+y' }] }, 20, 3);
-    expect(float.y).toBeGreaterThan(base.y);
-    expect(float.y).toBeLessThan(3);
-    // 浮力ブロックだけの体でも、上向きの力は重さより小さい
-    const onlyFloats: Blueprint = {
-      blocks: [core, ...Array.from({ length: 6 }, (_, i) => ({ id: i + 1, type: 'float' as const, parent: i, face: '+z' as const }))],
+  it('風を下向きに吹くと、床の上では持ち上がる(たくさん付けると浮く)', () => {
+    // コアの下に、風を十字に並べる(どれも下向きに吹く。左右前後対称なので傾かない)
+    const plate: Blueprint = {
+      blocks: [
+        core,
+        { id: 1, type: 'wind', parent: 0, face: '-y' },
+        { id: 2, type: 'wind', parent: 1, face: '+x', dir: '-y' },
+        { id: 3, type: 'wind', parent: 1, face: '-x', dir: '-y' },
+        { id: 4, type: 'wind', parent: 1, face: '+z', dir: '-y' },
+        { id: 5, type: 'wind', parent: 1, face: '-z', dir: '-y' },
+      ],
     };
-    // 重心が落ちていく(回転で端が持ち上がることはあるので、重心で見る)
-    expect(simulate(onlyFloats, 30, 3).com).toBeLessThan(3 - 0.5);
+    const base = simulate({ blocks: [core, { id: 1, type: 'base', parent: 0, face: '-y' }] }, 120, 0.6);
+    // 5つ:体の重さ(コア2kg + 5kg)より、床の近くでの持ち上げる力(5 × 1.5kg 分)が大きいので、床から浮く
+    const hover = simulate(plate, 180, 0.6);
+    expect(hover.y).toBeGreaterThan(base.y + 0.02);
+    // でも床から離れるほど力が弱まるので、高くは上がらない
+    expect(hover.y).toBeLessThan(base.y + WIND_BLOCK.groundRange);
+  });
+
+  it('下に床がなければ、風では持ち上がらない', () => {
+    const bp: Blueprint = {
+      blocks: [core, ...Array.from({ length: 6 }, (_, i) => ({ id: i + 1, type: 'wind' as const, parent: i, face: '+z' as const, dir: '-y' as const }))],
+    };
+    // 床から高いところ(持ち上げる力が届かない)に置くと、ふつうに落ちる
+    const t = 20 / 60;
+    const freeFall = 0.5 * -PHYSICS.gravity * t * t;
+    const start = simulate(bp, 0, 10).com;
+    const after = simulate(bp, 20, 10).com;
+    expect(start - after).toBeGreaterThan(freeFall * 0.95);
+  });
+
+  it('風を横に吹くと、反対向きに押されて進む', () => {
+    // 後ろ(-z)に吹く風:前(+z)に進む
+    const bp: Blueprint = { blocks: [core, { id: 1, type: 'wind', parent: 0, face: '-z' }] };
+    const world = new R.World({ x: 0, y: PHYSICS.gravity, z: 0 });
+    world.timestep = PHYSICS.dt;
+    world.createCollider(R.ColliderDesc.cuboid(20, 0.5, 20).setTranslation(0, -0.5, 0).setFriction(0.1));
+    const c = spawnCreature(R, world, bp, { position: { x: 0, y: 0.25, z: 0 }, yaw: 0 });
+    for (let i = 0; i < 60; i++) {
+      applyBlockForces(c);
+      world.step();
+    }
+    expect(c.bodies[0].translation().z).toBeGreaterThan(0.3);
+    world.free();
   });
 
   it('弾力ブロックはばねで別の剛体になり、落ちると縮む', () => {

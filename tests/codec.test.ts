@@ -32,7 +32,7 @@ describe('キャラのJSON', () => {
   it('キャラの往復で、体・脳・育成状況が一致する', () => {
     const c = sample();
     const json = characterToJson(c);
-    expect(json.version).toBe(4);
+    expect(json.version).toBe(5);
     expect(json.brains.motor!.inputs).toBe(26);
     expect(json.brains.motor!.outputs).toBe(4);
     expect(json.brains.decision!.inputs).toBe(77);
@@ -161,7 +161,7 @@ describe('形式の移行', () => {
       expect([...b.subarray(0, 3)]).toEqual([...a]);
       expect(b[3]).toBe(0);
     }
-    expect(characterToJson(c).version).toBe(4);
+    expect(characterToJson(c).version).toBe(5);
   });
 });
 
@@ -184,21 +184,39 @@ describe('形式4:形・摩擦オン・グリップの置き換え', () => {
     expect(totalCost(c.blueprint)).toBe(2);
   });
 
-  it('形と摩擦オンは保存して読み直しても同じ。既定の値はデータに入れない', () => {
+  it('古い浮力ブロックは、下向きに吹く風ブロックになる', () => {
     const c = parseCharacter({
       version: 4,
-      name: 'shapes',
+      name: 'float',
       blueprint: {
         blocks: [
-          { id: 0, type: 'core', parent: null, shape: 'sphere' },
-          { id: 1, type: 'cloud', parent: 0, face: '+x', shape: 'cylinder', grip: true },
-          { id: 2, type: 'float', parent: 0, face: '-x', shape: 'cube', grip: false },
+          { id: 0, type: 'core', parent: null },
+          { id: 1, type: 'float', parent: 0, face: '-y' },
+          { id: 2, type: 'float', parent: 0, face: '+x' },
         ],
       },
       brains: { motor: null, decision: null },
       progress: { passed: [], generations: {} },
     });
-    expect(c.blueprint.blocks[2]).toEqual({ id: 2, type: 'float', parent: 0, face: '-x' });
+    expect(c.blueprint.blocks[1]).toEqual({ id: 1, type: 'wind', parent: 0, face: '-y' });
+    expect(c.blueprint.blocks[2]).toEqual({ id: 2, type: 'wind', parent: 0, face: '+x', dir: '-y' });
+  });
+
+  it('形と摩擦オンは保存して読み直しても同じ。既定の値はデータに入れない', () => {
+    const c = parseCharacter({
+      version: 5,
+      name: 'shapes',
+      blueprint: {
+        blocks: [
+          { id: 0, type: 'core', parent: null, shape: 'sphere' },
+          { id: 1, type: 'cloud', parent: 0, face: '+x', shape: 'cylinder', grip: true },
+          { id: 2, type: 'wind', parent: 0, face: '-x', shape: 'cube', grip: false },
+        ],
+      },
+      brains: { motor: null, decision: null },
+      progress: { passed: [], generations: {} },
+    });
+    expect(c.blueprint.blocks[2]).toEqual({ id: 2, type: 'wind', parent: 0, face: '-x' });
     const again = parseCharacter(JSON.parse(JSON.stringify(characterToJson(c))));
     expect(again.blueprint).toEqual(c.blueprint);
     expect(() =>

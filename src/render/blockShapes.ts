@@ -46,6 +46,21 @@ export function orientBlockMesh(mesh: THREE.Object3D, b: BlockSpec): void {
   else mesh.quaternion.identity();
 }
 
+/** 風ブロックの吹く向きの矢印(ブロックの外側に出す)。dir はコア基準の向き */
+export function windArrow(dir: readonly [number, number, number], size: number, geometry: THREE.BufferGeometry, material: THREE.Material): THREE.Mesh {
+  const m = new THREE.Mesh(geometry, material);
+  const d = new THREE.Vector3(...dir);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+  m.position.copy(d.multiplyScalar(size * 0.75));
+  m.raycast = () => {};
+  return m;
+}
+
+/** 風の矢印の形(円すい) */
+export function windArrowGeometry(size: number): THREE.BufferGeometry {
+  return new THREE.ConeGeometry(size * 0.22, size * 0.4, 12);
+}
+
 /** 摩擦オンのしるし(緑の網目)。ブロックのメッシュに子として付ける */
 export function gripOverlay(geometry: THREE.BufferGeometry, material: THREE.Material): THREE.Mesh {
   const m = new THREE.Mesh(geometry, material);

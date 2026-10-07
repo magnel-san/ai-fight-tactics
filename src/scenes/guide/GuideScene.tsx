@@ -115,6 +115,14 @@ export function GuideScene({ character, onGo }: Props) {
             </tr>
           </thead>
           <tbody>
+            <tr>
+              <td>
+                <span className="swatch" style={{ background: hex(BLOCK_COLORS.core) }} /> コア
+              </td>
+              <td>{BLOCKS.core.cost}</td>
+              <td>{BLOCKS.core.mass}kg</td>
+              <td className="muted">1体に1個(最初からある)。黒い印が正面。コアが落ちると負け</td>
+            </tr>
             {PALETTE.map((p) => (
               <tr key={p.type}>
                 <td>
@@ -178,7 +186,8 @@ export function GuideScene({ character, onGo }: Props) {
             {STAGE.randomStart}秒後からランダムに崩れる。崩れる前のタイルは赤く光ります
           </li>
           <li>
-            <b>かけっこ</b>:{RACE.distance}m 先のゴールまでのタイムを競います(最大4体)。<b>サッカー</b>:{SOCCER.teamSize}対{SOCCER.teamSize}で、ボールをゴールに押し込みます
+            <b>かけっこ</b>:{RACE.distance}m 先のゴールまでのタイムを競います(最大4体)。<b>サッカー</b>:{SOCCER.teamSize}対{SOCCER.teamSize}
+            で、ボールをゴールに押し込みます
           </li>
           <li>
             <b>ランダムマッチ</b>:オンラインで、まだ戦っていない相手と自動で1対1。結果はランダムマッチのレートに反映されます(同じ相手とは1回だけ)

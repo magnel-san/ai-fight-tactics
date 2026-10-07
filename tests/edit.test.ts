@@ -45,8 +45,8 @@ describe('設計図の編集', () => {
 
   it('コスト上限を超える追加は拒否される', () => {
     let bp = emptyBlueprint();
-    // 浮力(コスト2)を一直線に並べて上限ちょうどにする
-    while (totalCost(bp) < CREATURE.maxCost) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'float'));
+    // 風(コスト2)を一直線に並べて上限ちょうどにする
+    while (totalCost(bp) < CREATURE.maxCost) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'wind'));
     expect(totalCost(bp)).toBe(CREATURE.maxCost);
     const r = addBlock(bp, 0, '-x', 'base');
     expect(r.ok).toBe(false);
@@ -98,7 +98,7 @@ describe('設計図の編集', () => {
   it('左右対称に置くとコスト上限を超える場合は拒否される', () => {
     let bp = emptyBlueprint();
     // 一直線に +z に並べてコストを上限-1にする
-    while (totalCost(bp) < CREATURE.maxCost - 2) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'float'));
+    while (totalCost(bp) < CREATURE.maxCost - 2) bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'wind'));
     bp = ok(addBlock(bp, bp.blocks.length - 1, '+z', 'base'));
     expect(totalCost(bp)).toBe(CREATURE.maxCost - 1);
     const r = addBlockSymmetric(bp, 0, '+x', 'base');

@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh } from '../../render/blockShapes';
+import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh, windArrow, windArrowGeometry } from '../../render/blockShapes';
 import { CREATURE, type BlockType } from '../../core/config';
 import {
   AXIS_DIR,
@@ -76,6 +76,8 @@ export class EditorView {
   /** 見た目の形 */
   private shapes = new BlockGeometries(SIZE * 0.98);
   private gripMat = gripMaterial();
+  private arrowGeometry = windArrowGeometry(SIZE);
+  private arrowMaterial = new THREE.MeshStandardMaterial({ color: 0xe0f7fa, transparent: true, opacity: 0.85 });
   private axisGeometry = new THREE.CylinderGeometry(0.025, 0.025, SIZE * 1.3, 8);
   private axisMaterial = new THREE.MeshBasicMaterial({ color: 0x0b3954 });
   /** ピストンの伸びる向きの印 */
@@ -220,6 +222,7 @@ export class EditorView {
         rod.raycast = () => {};
         mesh.add(rod);
       }
+      if (b.type === 'wind') mesh.add(windArrow(FACE_DIR[pistonDirection(b)], SIZE, this.arrowGeometry, this.arrowMaterial));
       if (b.type === 'core') mesh.add(this.frontMark());
     });
 
@@ -280,6 +283,8 @@ export class EditorView {
     for (const m of this.materials.values()) m.dispose();
     this.shapes.dispose();
     this.gripMat.dispose();
+    this.arrowGeometry.dispose();
+    this.arrowMaterial.dispose();
     this.pickMaterial.dispose();
     this.controls.dispose();
     this.renderer.dispose();

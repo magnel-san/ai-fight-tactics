@@ -16,8 +16,9 @@ import { TASK_ORDER, type TaskName } from './training/tasks';
  *   2:判断脳の目を4周61マスに広げた(入力77)
  *   3:ピストンブロックを追加。運動脳の入力にジャンプ指令、判断脳の出力にジャンプ指令を追加
  *   4:ブロックに形(shape)と摩擦オン(grip)を追加。グリップブロックを「基礎 + 摩擦オン」に置き換え、雲・浮力ブロックを追加
+ *   5:浮力ブロックを風ブロックに置き換え(下向きに吹く風にする)
  */
-export const FORMAT_VERSION = 4;
+export const FORMAT_VERSION = 5;
 
 interface BrainJson {
   inputs: number;
@@ -112,8 +113,26 @@ function migrate(input: { version?: unknown }): CharacterJson {
   if (json.version === 1) json = migrate1to2(json);
   if (json.version === 2) json = migrate2to3(json);
   if (json.version === 3) json = migrate3to4(json);
+  if (json.version === 4) json = migrate4to5(json);
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
+}
+
+/**
+ * 4 → 5:浮力ブロック(いつも上向きの力)を、下向きに吹く風ブロック(床の近くで持ち上げる)に置き換える
+ */
+function migrate4to5(json: CharacterJson): CharacterJson {
+  const bp = json.blueprint as { blocks?: unknown } | undefined;
+  if (!bp || !Array.isArray(bp.blocks)) return { ...json, version: 5 };
+  const blocks = bp.blocks.map((b: unknown) => {
+    const o = b as Record<string, unknown>;
+    if (!o || typeof o !== 'object' || o.type !== 'float') return o;
+    const next: Record<string, unknown> = { ...o, type: 'wind' };
+    if (o.face === '-y') delete next.dir;
+    else next.dir = '-y';
+    return next;
+  });
+  return { ...json, version: 5, blueprint: { ...(json.blueprint as object), blocks } as unknown as Blueprint };
 }
 
 /**
@@ -174,7 +193,7 @@ function migrate1to2(json: CharacterJson): CharacterJson {
   return { ...json, version: 2, brains: { ...json.brains, decision } };
 }
 
-const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'piston', 'sensor', 'cloud', 'float']);
+const BLOCK_TYPES = new Set(['core', 'base', 'joint', 'bouncy', 'piston', 'sensor', 'cloud', 'wind']);
 const SHAPE_SET = new Set(['cube', 'sphere', 'cylinder']);
 const FACES = new Set(['+x', '-x', '+y', '-y', '+z', '-z']);
 const AXES = new Set(['x', 'y', 'z']);
@@ -191,7 +210,7 @@ function parseBlueprint(v: unknown): Blueprint {
       spec.face = o.face as BlockSpec['face'];
     }
     if (o.dir !== undefined) {
-      if (!FACES.has(o.dir as string)) throw new Error(`ブロック${i}のピストンの向きが不正です`);
+      if (!FACES.has(o.dir as string)) throw new Error(`ブロック${i}の向きが不正です`);
       spec.dir = o.dir as BlockSpec['dir'];
     }
     if (o.axis !== undefined) {

@@ -40,7 +40,7 @@ export const PALETTE: { type: Exclude<BlockType, 'core'>; label: string; note: s
   { type: 'piston', label: 'ピストン', note: '1マス伸び縮みする(ジャンプや押し出しに)' },
   { type: 'bouncy', label: '弾力', note: 'ばねで伸び縮みし、当たった相手を弾き飛ばす' },
   { type: 'cloud', label: '雲', note: 'とても軽い。体を大きくしても重くならない(押されると飛ばされやすい)' },
-  { type: 'float', label: '浮力', note: '上向きの力が少しかかる(体が軽くなる。浮き上がるほどではない)' },
+  { type: 'wind', label: '風', note: '扇風機のように、吹く向きと反対向きに押す。下向きに吹くと床の近くで体を持ち上げる(たくさん付けると浮く)' },
   { type: 'sensor', label: 'センサー', note: 'トレーニング中に地面に触れると減点(倒れにくい動きを学ばせる。バトルでは普通のブロック)' },
 ];
 
@@ -266,9 +266,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           </>
         )}
 
-        {type === 'piston' && (
+        {(type === 'piston' || type === 'wind') && (
           <>
-            <h3>ピストンの伸びる向き</h3>
+            <h3>{type === 'piston' ? 'ピストンの伸びる向き' : '風の吹く向き'}</h3>
             <div className="segmented wrap">
               {PISTON_DIRS.map((d) => (
                 <button key={d.dir} className={pistonDir === d.dir ? 'selected' : ''} onClick={() => setPistonDirChoice(d.dir)} title={d.note}>
@@ -276,7 +276,11 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
                 </button>
               ))}
             </div>
-            <p className="muted small">付けた面の逆向き(親のブロックに向かう向き)には伸ばせません</p>
+            <p className="muted small">
+              {type === 'piston'
+                ? '付けた面の逆向き(親のブロックに向かう向き)には伸ばせません'
+                : '体は風と反対向きに押されます。「下」に吹くと、下に床があるとき体を持ち上げます(床がなければ持ち上がりません)'}
+            </p>
           </>
         )}
 
@@ -292,8 +296,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
               {selectedBlock.type === 'core' ? 'コア' : PALETTE.find((p) => p.type === selectedBlock.type)?.label}
               {selectedBlock.type === 'joint' && `(軸 ${selectedBlock.axis!.toUpperCase()})`}
               {selectedBlock.type === 'piston' && `(${dirLabel(pistonDirection(selectedBlock))}に伸びる)`}
+              {selectedBlock.type === 'wind' && `(${dirLabel(pistonDirection(selectedBlock))}に吹く)`}
             </div>
-            {selectedBlock.type === 'piston' && (
+            {(selectedBlock.type === 'piston' || selectedBlock.type === 'wind') && (
               <div className="segmented wrap">
                 {PISTON_DIRS.filter((d) => d.dir !== 'face').map((d) => {
                   const dir = d.dir as Face;
@@ -301,7 +306,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
                     <button
                       key={dir}
                       className={pistonDirection(selectedBlock) === dir ? 'selected' : ''}
-                      disabled={dir === oppositeFace(selectedBlock.face!)}
+                      disabled={selectedBlock.type === 'piston' && dir === oppositeFace(selectedBlock.face!)}
                       onClick={() => commit(symmetric ? setPistonDirSymmetric(blueprint, selected!, dir) : setPistonDir(blueprint, selected!, dir))}
                     >
                       {d.label}

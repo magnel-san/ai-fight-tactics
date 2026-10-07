@@ -1,9 +1,9 @@
 // 設計図からRapierの剛体・コライダー・関節を組み立てる(仕様書セクション4・5)。
 // 登録順は必ずブロックID順:剛体(セグメントの根のID順)→ コライダー(ブロックID順)→ 関節(関節ブロックのID順)。
 // 運動脳の入出力の並びは「関節(ID順)→ ピストン(ID順)」。
-// 弾力ブロックは親とばね(スライド)でつながり、浮力ブロックには物理ステップごとに上向きの力をかける(applyBlockForces)。
+// 弾力ブロックは親とばね(スライド)でつながり、風ブロックには物理ステップごとに力をかける(applyBlockForces)。
 import type { ImpulseJoint, PrismaticImpulseJoint, RevoluteImpulseJoint, RigidBody } from '@dimforge/rapier3d-compat';
-import { BLOCK_OPTIONS, BLOCKS, BOUNCY_SPRING, BRAIN, CREATURE, FLOAT_BLOCK } from '../config';
+import { BLOCK_OPTIONS, BLOCKS, BOUNCY_SPRING, BRAIN, CREATURE, PHYSICS, WIND_BLOCK } from '../config';
 import { atan2, cos, sin } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
@@ -30,8 +30,10 @@ export interface Creature {
   pistonBlockIds: number[];
   /** 弾力ブロックのばね(弾力ブロックのID順。脳では動かさない) */
   springs: PrismaticImpulseJoint[];
-  /** 浮力ブロック:属する剛体の番号と、剛体のローカル座標での位置 */
-  floats: { body: number; local: [number, number, number] }[];
+  /** 風ブロック:属する剛体の番号と、剛体のローカル座標での位置・吹く向き */
+  winds: { body: number; local: [number, number, number]; dir: [number, number, number] }[];
+  /** 風ブロックが床を探すのに使う(物理ワールドと Rapier) */
+  physics: { R: Rapier; world: InstanceType<Rapier['World']> };
   /** 各ブロックが属する剛体の番号(描画で使う) */
   segmentOf: number[];
   /** 各ブロックの、属する剛体のローカル座標での中心 [m](描画で使う) */
@@ -66,7 +68,7 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
   // コライダー:各ブロックを、属する剛体のローカル座標に置く
   const half = size / 2 - CREATURE.colliderShrink;
   const localOffsets: [number, number, number][] = [];
-  const floats: Creature['floats'] = [];
+  const winds: Creature['winds'] = [];
   bp.blocks.forEach((b, i) => {
     const root = segments[segmentOf[i]].root;
     const offset: [number, number, number] = [(pos[i][0] - pos[root][0]) * size, (pos[i][1] - pos[root][1]) * size, (pos[i][2] - pos[root][2]) * size];
@@ -90,7 +92,7 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
     if (b.grip) desc.setFrictionCombineRule(R.CoefficientCombineRule.Max);
     if (b.type === 'bouncy') desc.setRestitutionCombineRule(R.CoefficientCombineRule.Max);
     world.createCollider(desc, bodies[segmentOf[i]]);
-    if (b.type === 'float') floats.push({ body: segmentOf[i], local: offset });
+    if (b.type === 'wind') winds.push({ body: segmentOf[i], local: offset, dir: [...FACE_DIR[pistonDirection(b)]] });
   });
 
   // 関節:親ブロックと関節ブロックの接する面の中心をヒンジの支点にする
@@ -154,7 +156,7 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
     jointBlockIds.push(b.id);
   }
 
-  return { blueprint: bp, bodies, joints, jointBlockIds, pistons, pistonBlockIds, springs, floats, segmentOf, localOffsets };
+  return { blueprint: bp, bodies, joints, jointBlockIds, pistons, pistonBlockIds, springs, winds, physics: { R, world }, segmentOf, localOffsets };
 }
 
 /** 円柱(Rapier では軸がローカルの Y)を、指定した軸の向きに回す */
@@ -166,24 +168,46 @@ const CYLINDER_ROTATION: Record<Axis, { x: number; y: number; z: number; w: numb
   z: { x: H, y: 0, z: 0, w: H },
 };
 
+/** 風ブロック1つの力 [N]:自分の重さ + netLift [kg] 分 */
+const WIND_FORCE = (BLOCKS.wind.mass + WIND_BLOCK.netLift) * -PHYSICS.gravity;
+
 /**
- * ブロックごとの力をかける(物理ステップの直前に毎回呼ぶ)。いまは浮力ブロックの上向きの力だけ。
- * Rapier の力は呼ぶまで残り続け、かけた位置もワールド座標で固定されるので、毎ステップかけ直す
+ * ブロックごとの力をかける(物理ステップの直前に毎回呼ぶ)。いまは風ブロックの力だけ。
+ * 風は吹く向きと反対向きに押す。そのうち上向きの成分(持ち上げる力)は、真下の床までの近さに比例して弱める
+ * (自分の体以外の当たり判定を床とみなし、床からの高さが groundRange で0)。
+ * Rapier の力とトルクは消すまで残り続け、かけた位置もワールド座標で固定されるので、毎ステップ両方を消してかけ直す
  */
 export function applyBlockForces(creature: Creature): void {
-  if (creature.floats.length === 0) return;
+  if (creature.winds.length === 0) return;
+  const { R, world } = creature.physics;
+  const own = new Set(creature.bodies.map((b) => b.handle));
+  const notMine = (c: { parent(): { handle: number } | null }) => {
+    const p = c.parent();
+    return !p || !own.has(p.handle);
+  };
+  const half = CREATURE.blockSize / 2;
   const reset = new Set<number>();
-  for (const f of creature.floats) {
-    const body = creature.bodies[f.body];
-    if (!reset.has(f.body)) {
-      // 力とトルクは別々に残るので、両方を消してからかけ直す
+  for (const w of creature.winds) {
+    const body = creature.bodies[w.body];
+    if (!reset.has(w.body)) {
       body.resetForces(true);
       body.resetTorques(true);
-      reset.add(f.body);
+      reset.add(w.body);
     }
     const t = body.translation();
-    const [x, y, z] = rotate(body.rotation(), f.local[0], f.local[1], f.local[2]);
-    body.addForceAtPoint({ x: 0, y: FLOAT_BLOCK.lift, z: 0 }, { x: t.x + x, y: t.y + y, z: t.z + z }, true);
+    const q = body.rotation();
+    const [x, y, z] = rotate(q, w.local[0], w.local[1], w.local[2]);
+    const p = { x: t.x + x, y: t.y + y, z: t.z + z };
+    // 吹く向き(ワールド座標)の反対向きに押す
+    const d = rotate(q, w.dir[0], w.dir[1], w.dir[2]);
+    let fy = -d[1] * WIND_FORCE;
+    if (fy > 0) {
+      // 持ち上げる力は、真下に床があるときだけ(近いほど強い)
+      const hit = world.castRay(new R.Ray(p, { x: 0, y: -1, z: 0 }), half + WIND_BLOCK.groundRange, true, undefined, undefined, undefined, undefined, notMine);
+      const height = hit ? hit.timeOfImpact - half : Infinity;
+      fy *= Math.max(0, 1 - Math.max(0, height) / WIND_BLOCK.groundRange);
+    }
+    body.addForceAtPoint({ x: -d[0] * WIND_FORCE, y: fy, z: -d[2] * WIND_FORCE }, p, true);
   }
 }
 

@@ -68,7 +68,7 @@ export function addBlock(bp: Blueprint, parent: number, face: Face, type: BlockT
   const block: BlockSpec =
     type === 'joint'
       ? { id, type, parent, face, axis: axis ?? 'x' }
-      : type === 'piston' && pistonDir && pistonDir !== face
+      : (type === 'piston' || type === 'wind') && pistonDir && pistonDir !== face
         ? { id, type, parent, face, dir: pistonDir }
         : { id, type, parent, face };
   return finish({ blocks: [...bp.blocks, withLook(block, look)] });
@@ -145,10 +145,10 @@ export function setJointAxis(bp: Blueprint, id: number, axis: Axis): EditResult 
   return finish({ blocks: bp.blocks.map((x) => (x.id === id ? { ...x, axis } : x)) });
 }
 
-/** ピストンの伸びる向きを変更する(付けた面と同じ向きなら、指定なしに戻す) */
+/** ピストンの伸びる向き・風の吹く向きを変更する(付けた面と同じ向きなら、指定なしに戻す) */
 export function setPistonDir(bp: Blueprint, id: number, dir: Face): EditResult {
   const b = bp.blocks[id];
-  if (!b || b.type !== 'piston') return { ok: false, errors: ['ピストンではありません'] };
+  if (!b || (b.type !== 'piston' && b.type !== 'wind')) return { ok: false, errors: ['ピストン・風のブロックではありません'] };
   return finish({
     blocks: bp.blocks.map((x) => {
       if (x.id !== id) return x;
@@ -165,7 +165,7 @@ export function setPistonDirSymmetric(bp: Blueprint, id: number, dir: Face): Edi
   const first = setPistonDir(bp, id, dir);
   if (!first.ok) return first;
   const mirror = blockAt(bp, mirrorCell(blockPositions(bp)[id]));
-  if (mirror === undefined || mirror === id || bp.blocks[mirror].type !== 'piston') return first;
+  if (mirror === undefined || mirror === id || bp.blocks[mirror].type !== bp.blocks[id].type) return first;
   return setPistonDir(first.blueprint, mirror, mirrorFace(dir));
 }
 

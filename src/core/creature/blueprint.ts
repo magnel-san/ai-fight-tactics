@@ -15,7 +15,7 @@ export interface BlockSpec {
   face?: Face;
   /** 関節の回転軸(関節のみ。コア基準の3軸から選ぶ) */
   axis?: Axis;
-  /** ピストンの伸びる向き(ピストンのみ。コア基準。省略時は付けた面の向き = 親から離れる向き) */
+  /** ピストンの伸びる向き・風の吹く向き(ピストンと風のみ。コア基準。省略時は付けた面の向き = 親から離れる向き) */
   dir?: Face;
   /** 形(省略時は立方体) */
   shape?: BlockShape;
@@ -41,7 +41,7 @@ export function blockCost(b: BlockSpec): number {
  */
 export function cylinderAxis(b: BlockSpec): Axis {
   if (b.type === 'joint' && b.axis) return b.axis;
-  const f = b.type === 'piston' && b.face ? pistonDirection(b) : b.face;
+  const f = hasDirection(b.type) && b.face ? pistonDirection(b) : b.face;
   return f ? (f[1] as Axis) : 'y';
 }
 
@@ -71,9 +71,14 @@ export function oppositeFace(face: Face): Face {
   return ((face[0] === '+' ? '-' : '+') + face[1]) as Face;
 }
 
-/** ピストンの伸びる向き(指定がなければ付けた面の向き) */
+/** ピストンの伸びる向き・風の吹く向き(指定がなければ付けた面の向き) */
 export function pistonDirection(b: BlockSpec): Face {
   return b.dir ?? b.face!;
+}
+
+/** 向きを選べるブロックか(ピストンと風) */
+export function hasDirection(type: BlockSpec['type']): boolean {
+  return type === 'piston' || type === 'wind';
 }
 
 export function totalCost(bp: Blueprint): number {
@@ -178,9 +183,9 @@ export function validate(bp: Blueprint): string[] {
       errors.push(`関節ブロック${i}の回転軸が不正です:${b.axis}`);
     }
     if (b.dir !== undefined) {
-      if (b.type !== 'piston') errors.push(`ピストン以外のブロック${i}に伸びる向きが指定されています`);
-      else if (!(b.dir in FACE_DIR)) errors.push(`ピストン${i}の伸びる向きが不正です:${b.dir}`);
-      else if (b.face && b.dir === oppositeFace(b.face)) errors.push(`ピストン${i}は親のブロックに向かって伸ばせません`);
+      if (!hasDirection(b.type)) errors.push(`ピストン・風以外のブロック${i}に向きが指定されています`);
+      else if (!(b.dir in FACE_DIR)) errors.push(`ブロック${i}の向きが不正です:${b.dir}`);
+      else if (b.type === 'piston' && b.face && b.dir === oppositeFace(b.face)) errors.push(`ピストン${i}は親のブロックに向かって伸ばせません`);
     }
     if (b.type !== 'joint' && b.axis !== undefined) {
       errors.push(`関節以外のブロック${i}に回転軸が指定されています`);

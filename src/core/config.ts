@@ -52,7 +52,7 @@ export const CREATURE = {
  * ブロックの種類。グリップブロックは廃止し、どのブロックにも付けられる「摩擦オン」(BLOCK_OPTIONS)に置き換えた
  * (古いデータのグリップは、読み込むときに「基礎 + 摩擦オン」に変換する。コスト・重さ・摩擦は同じ)
  */
-export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'piston' | 'sensor' | 'cloud' | 'float';
+export type BlockType = 'core' | 'base' | 'joint' | 'bouncy' | 'piston' | 'sensor' | 'cloud' | 'wind';
 
 /** ブロックの形。重さはどの形でも同じ */
 export type BlockShape = 'cube' | 'sphere' | 'cylinder';
@@ -66,8 +66,8 @@ export const BLOCKS: Record<BlockType, { cost: number; mass: number; friction: n
   sensor: { cost: 1, mass: 0.5, friction: 0.8, restitution: 0.1 },
   /** 雲:とても軽い。体を大きくしても重くならない(そのぶん押されると飛ばされやすい) */
   cloud: { cost: 1, mass: 0.15, friction: 0.8, restitution: 0.1 },
-  /** 浮力:上向きの力が少しかかる(FLOAT_BLOCK) */
-  float: { cost: 2, mass: 1.0, friction: 0.8, restitution: 0.1 },
+  /** 風:扇風機のように、吹く向きと反対向きの力が常にかかる(WIND_BLOCK) */
+  wind: { cost: 2, mass: 1.0, friction: 0.8, restitution: 0.1 },
 };
 
 /** どのブロックにも付けられる設定 */
@@ -78,11 +78,14 @@ export const BLOCK_OPTIONS = {
 } as const;
 
 /**
- * 浮力ブロック:ブロックの位置に上向きの力をかける [N]。
- * 自分の重さ(1.0kg × 9.81 = 約9.8N)より小さくして、浮力ブロックだけでキャラが空に浮かないようにする
+ * 風ブロック:扇風機のように、吹く向き(既定は付けた面の向き)と反対向きの力が常にかかる。
+ * 力の大きさは「自分の重さ + netLift [kg]」分。下向きに吹けば体が持ち上がり、横向きに吹けば押されて進む。
+ * ただし持ち上げる力(上向きの成分)は、ブロックの真下に床があるときだけ働き、床に近いほど強い
+ * (床からの高さが groundRange [m] で0)。下に床がない場所(穴の上・ステージの外)では持ち上がらないので、空には逃げられない
  */
-export const FLOAT_BLOCK = {
-  lift: 6,
+export const WIND_BLOCK = {
+  netLift: 0.5,
+  groundRange: 1.0,
 } as const;
 
 /**

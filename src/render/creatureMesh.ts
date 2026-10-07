@@ -4,7 +4,7 @@ import type { BlockType } from '../core/config';
 import { CREATURE } from '../core/config';
 import { pistonStates, type Creature } from '../core/creature/assemble';
 import { FACE_DIR, pistonDirection, shapeOf } from '../core/creature/blueprint';
-import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh } from './blockShapes';
+import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh, windArrow, windArrowGeometry } from './blockShapes';
 
 export const BLOCK_COLORS: Record<BlockType, number> = {
   core: 0xf2c94c,
@@ -14,7 +14,7 @@ export const BLOCK_COLORS: Record<BlockType, number> = {
   piston: 0xc58b4a,
   sensor: 0xbb6bd9,
   cloud: 0xf4f7fb,
-  float: 0x7fd8e8,
+  wind: 0x7fd8e8,
 };
 
 export interface CreatureMesh {
@@ -49,6 +49,9 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
   // 形ごとの形状(当たり判定と同じ大きさ・向き)
   const geometries = new BlockGeometries(size);
   const grip = gripMaterial({ ghost: opts.ghost });
+  // 風の吹く向きの矢印
+  const arrowGeometry = windArrowGeometry(size);
+  const arrowMaterial = new THREE.MeshStandardMaterial({ color: 0xe0f7fa, transparent: true, opacity: opts.ghost ? 0.15 : 0.8 });
   const materials = new Map<BlockType, THREE.MeshStandardMaterial>();
   const material = (type: BlockType) => {
     let m = materials.get(type);
@@ -82,6 +85,12 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
     mesh.position.set(...creature.localOffsets[i]);
     orientBlockMesh(mesh, b);
     if (b.grip) mesh.add(gripOverlay(geometry, grip));
+    if (b.type === 'wind') {
+      // 矢印は形の向き(円柱の回転)に関係なく、剛体の座標で置く
+      const arrow = windArrow(FACE_DIR[pistonDirection(b)], size, arrowGeometry, arrowMaterial);
+      arrow.position.add(mesh.position);
+      groups[creature.segmentOf[i]].add(arrow);
+    }
     mesh.castShadow = !opts.ghost;
     groups[creature.segmentOf[i]].add(mesh);
     if (b.type === 'piston') {
@@ -117,6 +126,8 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
     dispose() {
       geometries.dispose();
       grip.dispose();
+      arrowGeometry.dispose();
+      arrowMaterial.dispose();
       rodGeometry.dispose();
       rodMaterial.dispose();
       markGeometry.dispose();
