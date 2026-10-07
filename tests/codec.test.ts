@@ -32,7 +32,7 @@ describe('キャラのJSON', () => {
   it('キャラの往復で、体・脳・育成状況が一致する', () => {
     const c = sample();
     const json = characterToJson(c);
-    expect(json.version).toBe(8);
+    expect(json.version).toBe(9);
     expect(json.brains.motor!.inputs).toBe(26);
     expect(json.brains.motor!.outputs).toBe(4);
     expect(json.brains.decision!.inputs).toBe(81);
@@ -162,7 +162,7 @@ describe('形式の移行', () => {
       expect([...b.subarray(0, 3)]).toEqual([...a]);
       expect(b[3]).toBe(0);
     }
-    expect(characterToJson(c).version).toBe(8);
+    expect(characterToJson(c).version).toBe(9);
   });
 });
 

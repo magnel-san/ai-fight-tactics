@@ -129,11 +129,14 @@ export class EpisodeViewer {
     this.floor.visible = !main.stage && !main.props;
     if (main.props) {
       for (const b of main.props.boxes) {
+        const see = b.opacity !== undefined;
         const mesh = new THREE.Mesh(
           new THREE.BoxGeometry(b.hx * 2, b.hy * 2, b.hz * 2),
-          new THREE.MeshStandardMaterial({ color: b.color, transparent: b.opacity !== undefined, opacity: b.opacity ?? 1 }),
+          // 半透明の柵は、奥のものが透けて見えるよう深度を書かない
+          new THREE.MeshStandardMaterial({ color: b.color, transparent: see, opacity: b.opacity ?? 1, depthWrite: !see }),
         );
         mesh.position.set(b.x, b.y, b.z);
+        mesh.rotation.y = b.yaw ?? 0;
         mesh.receiveShadow = true;
         this.scene.add(mesh);
         this.propMeshes.push(mesh);

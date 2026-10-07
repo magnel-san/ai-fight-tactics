@@ -36,6 +36,7 @@ const TABS: { id: Tab; label: string }[] = [
 const BATTLE_SUBS: { id: BattleSub; label: string; note: string }[] = [
   { id: 'battle', label: 'バトル', note: '崩れるステージで1対1' },
   { id: 'race', label: 'かけっこ', note: 'ゴールまでのタイムを競う' },
+  { id: 'jump', label: 'ジャンプ', note: 'どれだけ高く跳べるかを競う' },
   { id: 'soccer', label: 'サッカー', note: '3対3でボールを押し込む' },
   { id: 'random', label: 'ランダムマッチ', note: 'オンラインの相手と自動で対戦(レートあり)' },
 ];

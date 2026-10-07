@@ -1,7 +1,7 @@
 // トレーニングメニューの一覧と評価(仕様書セクション9)。
 // 各メニューは、どちらの脳を鍛えるか・エピソードの作り方・合格判定を持つ。
 import type { Blueprint } from '../creature/blueprint';
-import { AVOID_TASK, CHASE_TASK, HOLES_TASK, JUMP_TASK, MOVE_TASK, PUSH_TASK, SURVIVE_TASK, type TrainStyle } from '../config';
+import { AVOID_TASK, CHASE_TASK, HOLES_TASK, JUMP_TASK, MOVE_TASK, PUSH_TASK, RACE, SOCCER_DRILL, SPRINT_TASK, SURVIVE_TASK, type SoccerRole, type TrainStyle } from '../config';
 import type { Rapier } from '../physics/rapier';
 import { MatchEpisode } from '../sim/match';
 import { ChaseEpisode } from './chase';
@@ -9,9 +9,12 @@ import type { Episode, EpisodeFlags, EpisodeOutcome } from './episode';
 import { HolesEpisode } from './holes';
 import { JumpEpisode } from './jump';
 import { MoveEpisode, type Sector } from './move';
+import { SoccerDrillEpisode } from './soccerDrill';
+import { SprintEpisode } from './sprint';
 
-export type TaskName = 'move' | 'chase' | 'jump' | 'holes' | 'avoid' | 'survive' | 'push' | 'rival';
-export type BrainKind = 'motor' | 'decision';
+export type TaskName = 'move' | 'chase' | 'jump' | 'holes' | 'avoid' | 'survive' | 'push' | 'rival' | 'sprint' | 'shooter' | 'carrier' | 'blocker';
+/** 鍛える脳:運動脳・判断脳・サッカー脳(役割ごと) */
+export type BrainKind = 'motor' | 'decision' | 'soccer';
 
 /** 試合・課題に出るキャラ1体分のデータ */
 export interface FighterData {
@@ -20,6 +23,8 @@ export interface FighterData {
   decision: Float64Array | null;
   /** 判断を脳でするか、ルールベースの突進BOTか */
   controller: 'brain' | 'rush';
+  /** サッカー脳(役割ごと。鍛えていない役割は手書きの動きになる) */
+  soccer?: Partial<Record<SoccerRole, Float64Array>>;
 }
 
 /** トレーニングの条件(鍛えている脳以外は凍結して、ここから使う) */
@@ -44,6 +49,8 @@ export interface TaskDef {
   name: TaskName;
   label: string;
   brain: BrainKind;
+  /** サッカー脳のメニューなら、その役割 */
+  role?: SoccerRole;
   /** メニューの説明と合格条件(画面に出す) */
   note: string;
   passCondition: string;
@@ -185,6 +192,57 @@ export const TASKS: Record<TaskName, TaskDef> = {
       return `突進BOTに${PUSH_TASK.confirmMatches}戦${rush}勝・標準BOTに${PUSH_TASK.confirmMatches}戦${std}勝(それぞれ${PUSH_TASK.confirmWins}勝で合格)`;
     },
   },
+  sprint: {
+    name: 'sprint',
+    label: 'かけっこ(全力疾走)',
+    brain: 'motor',
+    note: '運動脳を鍛える。まっすぐ全力で走る練習。速く走れるほど高い得点(曲がり方を忘れないよう、目標地点への移動も混ぜる)',
+    passCondition: `${SPRINT_TASK.confirmEpisodes}回中${SPRINT_TASK.confirmPassCount}回、${RACE.distance}mを${SPRINT_TASK.passTime}秒以内`,
+    createEpisode: (R, setup, genome, seed, sector, mode) =>
+      // 曲がり方を忘れないよう、学習中は評価エピソードの最後の1つを目標地点への移動にする
+      mode === 'train' && sector.count > 1 && sector.index === sector.count - 1
+        ? new MoveEpisode(R, setup.blueprint, genome, seed, { index: 0, count: 1 })
+        : new SprintEpisode(R, setup.blueprint, genome, seed),
+    confirmEpisodes: SPRINT_TASK.confirmEpisodes,
+    passed: (o) => successCount(o) >= SPRINT_TASK.confirmPassCount,
+    describe: (o) => `${successCount(o)} / ${o.length} 回、${SPRINT_TASK.passTime}秒以内(最速 ${Math.min(...o.map((x) => x.metric)).toFixed(1)}秒)`,
+  },
+  shooter: {
+    name: 'shooter',
+    label: 'サッカー:シューター',
+    brain: 'soccer',
+    role: 'shooter',
+    note: 'サッカー脳(シューター)を鍛える。ボールを取りに行き、相手のブロッカーが守るゴールにシュートを決める',
+    passCondition: `${SOCCER_DRILL.confirmEpisodes}回中${SOCCER_DRILL.confirmPassCount}回、ゴールを決める`,
+    createEpisode: (R, setup, genome, seed) => new SoccerDrillEpisode(R, 'shooter', { blueprint: setup.blueprint, motor: needMotor(setup) }, genome, seed),
+    confirmEpisodes: SOCCER_DRILL.confirmEpisodes,
+    passed: (o) => successCount(o) >= SOCCER_DRILL.confirmPassCount,
+    describe: (o) => `${successCount(o)} / ${o.length} 回成功(${SOCCER_DRILL.confirmPassCount}回で合格)`,
+  },
+  carrier: {
+    name: 'carrier',
+    label: 'サッカー:キャリアー',
+    brain: 'soccer',
+    role: 'carrier',
+    note: 'サッカー脳(キャリアー)を鍛える。ボールを拾い、追いかけてくるBOTに取られないように前へ運ぶ',
+    passCondition: `${SOCCER_DRILL.confirmEpisodes}回中${SOCCER_DRILL.confirmPassCount}回、${SOCCER_DRILL.carryGoal}m以上ドリブルで運ぶ`,
+    createEpisode: (R, setup, genome, seed) => new SoccerDrillEpisode(R, 'carrier', { blueprint: setup.blueprint, motor: needMotor(setup) }, genome, seed),
+    confirmEpisodes: SOCCER_DRILL.confirmEpisodes,
+    passed: (o) => successCount(o) >= SOCCER_DRILL.confirmPassCount,
+    describe: (o) => `${successCount(o)} / ${o.length} 回成功(${SOCCER_DRILL.confirmPassCount}回で合格)`,
+  },
+  blocker: {
+    name: 'blocker',
+    label: 'サッカー:ブロッカー',
+    brain: 'soccer',
+    role: 'blocker',
+    note: 'サッカー脳(ブロッカー)を鍛える。ゴールの前で待ち、飛んでくるシュートを止めて、ゴール前に戻る',
+    passCondition: `${SOCCER_DRILL.confirmEpisodes}回中${SOCCER_DRILL.confirmPassCount}回、${SOCCER_DRILL.shots}本のシュートのうち決められるのを${SOCCER_DRILL.allowedGoals}本以下にする`,
+    createEpisode: (R, setup, genome, seed) => new SoccerDrillEpisode(R, 'blocker', { blueprint: setup.blueprint, motor: needMotor(setup) }, genome, seed),
+    confirmEpisodes: SOCCER_DRILL.confirmEpisodes,
+    passed: (o) => successCount(o) >= SOCCER_DRILL.confirmPassCount,
+    describe: (o) => `${successCount(o)} / ${o.length} 回成功(${SOCCER_DRILL.confirmPassCount}回で合格)`,
+  },
   rival: {
     name: 'rival',
     label: 'ライバル練習試合',
@@ -254,10 +312,10 @@ export function levelPace(level: number): number {
  * メニューの解放順(仕様書セクション9)。運動脳:移動 → 追跡 →(ジャンプ・穴をまたぐ は任意)、
  * 判断脳:危険なタイルを避ける → 生き残り → BOTとの押し合い → ライバル練習試合
  */
-export const TASK_ORDER: readonly TaskName[] = ['move', 'chase', 'jump', 'holes', 'avoid', 'survive', 'push', 'rival'];
+export const TASK_ORDER: readonly TaskName[] = ['move', 'chase', 'jump', 'holes', 'avoid', 'survive', 'push', 'rival', 'sprint', 'shooter', 'carrier', 'blocker'];
 
 /** 任意のメニュー(合格しなくても先に進める) */
-export const OPTIONAL_TASKS: readonly TaskName[] = ['jump', 'holes', 'rival'];
+export const OPTIONAL_TASKS: readonly TaskName[] = ['jump', 'holes', 'rival', 'sprint', 'shooter', 'carrier', 'blocker'];
 
 export function isUnlocked(task: TaskName, passed: readonly TaskName[]): boolean {
   // 一度合格したメニューは、あとから前提のメニューが増えても開いたままにする
@@ -270,6 +328,10 @@ export function isUnlocked(task: TaskName, passed: readonly TaskName[]): boolean
     case 'jump':
     case 'holes':
     case 'avoid':
+    case 'sprint':
+    case 'shooter':
+    case 'carrier':
+    case 'blocker':
       return passed.includes('chase');
     case 'survive':
       return passed.includes('avoid');

@@ -2,6 +2,8 @@
 // 形式を変えたときは version を上げ、migrate() に移行処理を書く。
 // 受け取ったデータは信用せず、parseCharacter() で形と値を検証してから使う(不正対策)。
 import { decisionGenomeLength, DECISION_SHAPE, EYE_HEXES } from './brain/decision';
+import { SOCCER_SHAPE, soccerGenomeLength } from './brain/soccer';
+import type { SoccerRole } from './config';
 import { appendOutputs, mlpParamCount, remapInputs } from './brain/mlp';
 import { hexesWithin } from './stage/hex';
 import { fromF16Bits, toF16Bits } from './brain/f16';
@@ -21,8 +23,9 @@ import { TASK_ORDER, type TaskName } from './training/tasks';
  *   6:円柱の軸の向き(cylAxis)と、関節のタイヤモード(tire)を追加(古いデータはそのまま読める)
  *   7:関節の360°回転(spin)を追加(古いデータはそのまま読める)
  *   8:判断脳の入力の最後に、相手との接触4つ(触れているか・近づく速さ・いちばん近いブロックまでの距離・相手の周りの危険度)を追加(入力81)
+ *   9:サッカー脳(役割ごと:shooter・blocker・carrier)を追加(古いデータはそのまま読める)
  */
-export const FORMAT_VERSION = 8;
+export const FORMAT_VERSION = 9;
 
 interface BrainJson {
   inputs: number;
@@ -39,6 +42,8 @@ export interface CharacterJson {
     /** weights の最後の1個はリズム周期の遺伝子(周期の対数)。rhythmPeriod は確認用の値 */
     motor: (BrainJson & { rhythmPeriod: number }) | null;
     decision: BrainJson | null;
+    /** サッカー脳(役割ごと。鍛えていない役割は持たない) */
+    soccer?: Partial<Record<SoccerRole, BrainJson>>;
   };
   progress: Progress;
 }
@@ -106,6 +111,13 @@ export function characterToJson(c: Character): CharacterJson {
         ? { inputs: ms.inputs, hidden: ms.hidden, outputs: ms.outputs, rhythmPeriod: Number(rhythmPeriod(c.motor).toFixed(3)), weights: encodeWeights(c.motor) }
         : null,
       decision: c.decision ? { ...DECISION_SHAPE, weights: encodeWeights(c.decision) } : null,
+      ...(c.soccer && Object.keys(c.soccer).length > 0
+        ? {
+            soccer: Object.fromEntries(
+              (Object.entries(c.soccer) as [SoccerRole, Float64Array][]).map(([role, g]) => [role, { ...SOCCER_SHAPE, weights: encodeWeights(g) }]),
+            ),
+          }
+        : {}),
     },
     progress: c.progress,
   };
@@ -123,6 +135,8 @@ function migrate(input: { version?: unknown }): CharacterJson {
   // 6 → 7:項目を足しただけ
   if (json.version === 6) json = { ...json, version: 7 };
   if (json.version === 7) json = migrate7to8(json);
+  // 8 → 9:サッカー脳を足しただけ
+  if (json.version === 8) json = { ...json, version: 9 };
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
 }
@@ -304,6 +318,12 @@ export function parseCharacter(input: string | unknown): Character {
   const name = typeof json.name === 'string' && json.name.trim() ? json.name.slice(0, 40) : '名無し';
   const motor = parseWeights(json.brains?.motor, motorGenomeLength(actuatorCount(blueprint)), '運動脳');
   const decision = parseWeights(json.brains?.decision, decisionGenomeLength(), '判断脳');
+  const soccer: Partial<Record<SoccerRole, Float64Array>> = {};
+  // 役割の一覧はここで作る(モジュールの読み込み順に左右されないように)
+  for (const role of ['shooter', 'blocker', 'carrier'] as const satisfies readonly SoccerRole[]) {
+    const w = parseWeights(json.brains?.soccer?.[role], soccerGenomeLength(), 'サッカー脳');
+    if (w) soccer[role] = w;
+  }
   const p = (json.progress ?? {}) as Partial<Progress>;
   const passed = Array.isArray(p.passed) ? p.passed.filter((t): t is TaskName => TASK_ORDER.includes(t as TaskName)) : [];
   const generations: Progress['generations'] = {};
@@ -317,5 +337,5 @@ export function parseCharacter(input: string | unknown): Character {
   const report = parseReport(p.report);
   if (report) progress.report = report;
   if (Array.isArray(p.milestones)) progress.milestones = p.milestones.filter((m): m is string => typeof m === 'string').slice(0, 20);
-  return { name, blueprint, motor, decision, progress };
+  return { name, blueprint, motor, decision, ...(Object.keys(soccer).length > 0 ? { soccer } : {}), progress };
 }

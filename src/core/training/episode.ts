@@ -36,7 +36,7 @@ export interface EpisodeProps {
   /** 動く球(ボール) */
   spheres: { body: RigidBody; radius: number; color: number }[];
   /** 動かない箱(壁・ゴール)。中心と半分の大きさ [m] */
-  boxes: { x: number; y: number; z: number; hx: number; hy: number; hz: number; color: number; opacity?: number }[];
+  boxes: { x: number; y: number; z: number; hx: number; hy: number; hz: number; color: number; opacity?: number; /** 鉛直軸まわりの回転 [rad] */ yaw?: number }[];
 }
 
 export interface Episode {

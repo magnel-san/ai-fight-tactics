@@ -1,5 +1,6 @@
 // ランクマッチの試合と、かけっこの公式記録の計算(Worker でもメインスレッドでも同じ結果になる)
 import { RANKED } from '../config';
+import { jumpRecord } from '../events/highjump';
 import { RaceEpisode } from '../events/race';
 import type { Rapier } from '../physics/rapier';
 import { MatchEpisode } from '../sim/match';
@@ -20,9 +21,11 @@ export interface RaceRecord {
   best: number | null;
   /** ゴールしなかったときの、いちばん長く進んだ距離 [m] */
   distance: number;
+  /** ジャンプの公式記録:いちばん高く跳んだ上がり幅 [m] */
+  jump: number;
 }
 
-/** かけっこの公式記録:決まったシードで1体ずつ走らせ、最速のタイムを記録にする */
+/** かけっことジャンプの公式記録:決まったシードで1体ずつ走らせ(跳ばせ)、最速のタイム・最高の高さを記録にする */
 export function raceRecord(R: Rapier, c: FighterData): RaceRecord {
   let best: number | null = null;
   let distance = 0;
@@ -35,5 +38,5 @@ export function raceRecord(R: Rapier, c: FighterData): RaceRecord {
     if (t !== null && (best === null || t < best)) best = t;
     distance = Math.max(distance, r.distance[0]);
   }
-  return { best, distance };
+  return { best, distance, jump: jumpRecord(R, c) };
 }

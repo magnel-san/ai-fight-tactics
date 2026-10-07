@@ -11,17 +11,15 @@
 //   --seed N
 //   --level N         生き残りを始めるレベル(省略時は保存されているレベル)
 import { readFileSync, writeFileSync } from 'node:fs';
-import { createDecisionGenome } from '../src/core/brain/decision';
-import { createMotorGenome } from '../src/core/brain/motor';
 import { newCharacter, type Character } from '../src/core/character';
 import { characterToJson, parseCharacter } from '../src/core/codec';
-import { actuatorCount } from '../src/core/creature/blueprint';
 import { SAMPLES } from '../src/core/creature/samples';
 import { Rng } from '../src/core/math/rng';
 import { TASKS, type TaskName } from '../src/core/training/tasks';
 import { standardBot } from '../src/data/bots';
 import { Trainer, type Opponent } from '../src/training/Trainer';
 import { NodePool } from './headless/pool';
+import { freshGenome, trainedGenome, withTrained } from '../src/core/training/brains';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -47,11 +45,8 @@ else {
 if (arg('name')) character.name = arg('name')!;
 if (arg('level')) character.progress.surviveLevel = Number(arg('level'));
 
-const genome =
-  task.brain === 'motor'
-    ? (character.motor ?? createMotorGenome(actuatorCount(character.blueprint), rng.fork()))
-    : (character.decision ?? createDecisionGenome(rng.fork()));
-if (task.brain === 'decision' && !character.motor) throw new Error('運動脳がありません');
+const genome = trainedGenome(character, taskName) ?? freshGenome(character, taskName, rng.fork());
+if (task.brain !== 'motor' && !character.motor) throw new Error('運動脳がありません');
 
 const opponents: Opponent[] = (taskName === 'push' ? (arg('opponents') ?? 'rush,standard').split(',') : []).map((kind) => {
   if (kind === 'rush') return { label: '突進BOT', data: { blueprint: character.blueprint, motor: character.motor!, decision: null, controller: 'rush' as const } };
@@ -82,8 +77,7 @@ await new Promise<void>((resolve, reject) => {
     rng.nextU32(),
     (r) => {
       gens++;
-      if (task.brain === 'motor') character.motor = r.champion;
-      else character.decision = r.champion;
+      character = withTrained(character, taskName, r.champion);
       character.progress.generations[taskName] = (character.progress.generations[taskName] ?? 0) + 1;
       if (taskName === 'survive') character.progress.surviveLevel = r.setup.level;
       if (r.passed && !character.progress.passed.includes(taskName)) character.progress.passed.push(taskName);

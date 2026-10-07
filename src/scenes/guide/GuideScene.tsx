@@ -3,6 +3,7 @@
 import type { Character } from '../../core/character';
 import { ENTRY_REQUIRED_TASK } from '../../core/character';
 import { BATTLE, BLOCK_OPTIONS, BLOCKS, CREATURE, RACE, RANKED, SOCCER, STAGE } from '../../core/config';
+import { BRAIN_LABELS } from '../../core/training/brains';
 import { OPTIONAL_TASKS, TASK_ORDER, TASKS } from '../../core/training/tasks';
 import { BLOCK_COLORS } from '../../render/creatureMesh';
 import { PALETTE, SHAPE_LABELS } from '../create/CreateScene';
@@ -168,7 +169,7 @@ export function GuideScene({ character, onGo }: Props) {
                   {i + 1}. {TASKS[t].label}
                   {OPTIONAL_TASKS.includes(t) && <span className="optional">任意</span>}
                 </td>
-                <td>{TASKS[t].brain === 'motor' ? '運動脳' : '判断脳'}</td>
+                <td>{BRAIN_LABELS[TASKS[t].brain]}</td>
                 <td className="muted">{TASKS[t].passCondition}</td>
               </tr>
             ))}
@@ -192,8 +193,9 @@ export function GuideScene({ character, onGo }: Props) {
             {STAGE.randomStart}秒後からランダムに崩れる。崩れる前のタイルは赤く光ります
           </li>
           <li>
-            <b>かけっこ</b>:{RACE.distance}m 先のゴールまでのタイムを競います(最大4体)。<b>サッカー</b>:{SOCCER.teamSize}対{SOCCER.teamSize}
-            で、ボールをゴールに押し込みます
+            <b>かけっこ</b>:{RACE.distance}m 先のゴールまでのタイムを競います(最大4体)。<b>ジャンプ</b>:合図に合わせて跳び、いちばん高い記録を競います。
+            <b>サッカー</b>:{SOCCER.teamSize}対{SOCCER.teamSize}で、ボールをゴールに押し込みます。選手ごとに役割(シューター・キャリアー・ブロッカー)を選び、
+            トレーニングでその役割のサッカー脳を鍛えると、お手本の動きより上手になります
           </li>
           <li>
             <b>ランダムマッチ</b>:オンラインで、まだ戦っていない相手と自動で1対1。結果はランダムマッチのレートに反映されます(同じ相手とは1回だけ)

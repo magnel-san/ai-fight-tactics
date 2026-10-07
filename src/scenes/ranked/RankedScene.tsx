@@ -57,7 +57,7 @@ interface LiveTournament {
 export type RankedView = 'live' | 'ranking' | 'entry';
 type View = RankedView;
 const VIEW_TITLES: Record<View, string> = { live: 'トーナメント配信', ranking: 'ランキング', entry: '出場登録' };
-type SortKey = 'rating' | 'wins' | 'race';
+type SortKey = 'rating' | 'wins' | 'race' | 'jump';
 /** ランキングの部門:トーナメントとランダムマッチ(レートは別々) */
 type Division = 'tournament' | 'random';
 
@@ -460,7 +460,9 @@ export function RankedScene({ charId, character, active, view }: Props) {
       ? y.rating - x.rating || y.wins - x.wins
       : sortKey === 'wins'
         ? y.wins - x.wins || y.rating - x.rating
-        : raceKey(x.race) - raceKey(y.race),
+        : sortKey === 'jump'
+          ? (y.race?.jump ?? -1) - (x.race?.jump ?? -1)
+          : raceKey(x.race) - raceKey(y.race),
   );
   const raceIds = rows.map((r) => r.entryId).join(',');
 
@@ -472,7 +474,8 @@ export function RankedScene({ charId, character, active, view }: Props) {
       for (const id of raceIds.split(',').map(Number)) {
         if (cancelled) return;
         if (races.has(id)) continue;
-        const key = `ranked-race:${id}`;
+        // ジャンプの記録を足したので、保存のキーを変えて測り直す
+        const key = `ranked-race2:${id}`;
         let rec = await getSetting<RaceRecord>(key);
         if (!rec) {
           const f = (await api.entryFighters([id])).get(id);
@@ -772,6 +775,7 @@ export function RankedScene({ charId, character, active, view }: Props) {
                   ['rating', 'レート'],
                   ['wins', '勝利数'],
                   ['race', 'かけっこ'],
+                  ['jump', 'ジャンプ'],
                 ] as const
               ).map(([k, l]) => (
                 <button key={k} className={sortKey === k ? 'selected' : ''} onClick={() => setSortKey(k)}>
@@ -812,12 +816,13 @@ export function RankedScene({ charId, character, active, view }: Props) {
                   <th>勝利数</th>
                   <th>成績</th>
                   <th>かけっこ</th>
+                  <th>ジャンプ</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="muted">
+                    <td colSpan={8} className="muted">
                       {division === 'tournament' ? 'まだ登録がありません' : 'まだ試合がありません'}
                     </td>
                   </tr>
@@ -847,6 +852,7 @@ export function RankedScene({ charId, character, active, view }: Props) {
                         <span className="muted">計測中…</span>
                       )}
                     </td>
+                    <td>{r.race ? `${(r.race.jump * 100).toFixed(0)}cm` : <span className="muted">計測中…</span>}</td>
                   </tr>
                 ))}
               </tbody>

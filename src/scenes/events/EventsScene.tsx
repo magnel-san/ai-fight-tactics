@@ -3,10 +3,12 @@
 // 参加できるのは、トレーニング「対象を追う」に合格したキャラだけ(指令の方向へまっすぐ進めないと競技にならないため)。
 // 参加するキャラは、自分のキャラと、バトルの対戦相手の一覧(BOT・保存キャラ・受け取ったキャラ)から選ぶ。
 import { useEffect, useRef, useState } from 'react';
-import { canEnter, ENTRY_REQUIRED_TASK, type Character } from '../../core/character';
-import { RACE, SOCCER } from '../../core/config';
+import { battleFighter, canEnter, ENTRY_REQUIRED_TASK, type Character } from '../../core/character';
+import { HIGH_JUMP, RACE, SOCCER, type SoccerRole } from '../../core/config';
+import { HighJumpEpisode, type HighJumpResult } from '../../core/events/highjump';
 import { RaceEpisode, type RaceResult } from '../../core/events/race';
-import { SoccerEpisode, type SoccerResult } from '../../core/events/soccer';
+import { DEFAULT_ROLES, SoccerEpisode, type SoccerResult } from '../../core/events/soccer';
+import { SOCCER_ROLE_LIST } from '../../core/training/soccerDrill';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import { TASKS, type FighterData, type TaskName } from '../../core/training/tasks';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
@@ -26,9 +28,9 @@ interface Props {
   mode: EventMode;
 }
 
-export type EventMode = 'race' | 'soccer' | 'random';
+export type EventMode = 'race' | 'jump' | 'soccer' | 'random';
 type Mode = EventMode;
-const MODE_TITLES: Record<Mode, string> = { race: 'かけっこ', soccer: 'サッカー(3対3)', random: 'ランダムマッチ' };
+const MODE_TITLES: Record<Mode, string> = { race: 'かけっこ', jump: 'ジャンプ', soccer: 'サッカー(3対3)', random: 'ランダムマッチ' };
 const NONE = '';
 const ME = '__me__';
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
@@ -47,7 +49,11 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
   // サッカー:チームA(自分 + 2体)とチームB(3体)
   const [teamA, setTeamA] = useState<string[]>([ME, entries[1]?.id ?? NONE, entries[1]?.id ?? NONE]);
   const [teamB, setTeamB] = useState<string[]>([entries[0]?.id ?? NONE, entries[0]?.id ?? NONE, entries[0]?.id ?? NONE]);
+  // サッカー:それぞれの選手の役割(シューター・キャリアー・ブロッカー)
+  const [rolesA, setRolesA] = useState<SoccerRole[]>([...DEFAULT_ROLES]);
+  const [rolesB, setRolesB] = useState<SoccerRole[]>([...DEFAULT_ROLES]);
   const [race, setRace] = useState<{ names: string[]; result: RaceResult | null; time: number } | null>(null);
+  const [jump, setJump] = useState<{ names: string[]; result: HighJumpResult | null; attempt: number; done: boolean } | null>(null);
   const [soccer, setSoccer] = useState<{ names: string[][]; result: SoccerResult; time: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const lastHud = useRef(0);
@@ -77,9 +83,8 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
   /** 選んだIDのキャラのデータと名前 */
   const pick = (id: string): { name: string; data: FighterData } | null => {
     if (id === ME) {
-      return ready && character.motor
-        ? { name: character.name, data: { blueprint: character.blueprint, motor: character.motor, decision: character.decision, controller: 'brain' } }
-        : null;
+      const data = ready ? battleFighter(character) : null;
+      return data ? { name: character.name, data } : null;
     }
     const e = entries.find((x) => x.id === id);
     return e ? { name: e.label, data: e.data } : null;
@@ -114,6 +119,36 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
     viewer.setEpisodes(ep);
   };
 
+  const startJump = () => {
+    const R = rapierRef.current;
+    const viewer = viewerRef.current;
+    if (!R || !viewer) return;
+    setError(null);
+    setSoccer(null);
+    setRace(null);
+    const chosen = [ME, ...runners].map(pick).filter((x): x is NonNullable<typeof x> => x !== null);
+    if (chosen.length === 0) {
+      setError(`トレーニング「${TASKS[EVENT_REQUIRED_TASK].label}」に合格したキャラが必要です`);
+      return;
+    }
+    const ep = new HighJumpEpisode(
+      R,
+      chosen.map((c) => c.data),
+      randomSeed(),
+    );
+    const names = chosen.map((c) => c.name);
+    setJump({ names, result: null, attempt: 0, done: false });
+    viewer.onFrame = (e) => {
+      const j = e as HighJumpEpisode;
+      const now = performance.now();
+      if (now - lastHud.current > 150 || j.done) {
+        lastHud.current = now;
+        setJump({ names, result: j.result(), attempt: j.attemptNumber, done: j.done });
+      }
+    };
+    viewer.setEpisodes(ep);
+  };
+
   const startSoccer = () => {
     const R = rapierRef.current;
     const viewer = viewerRef.current;
@@ -128,8 +163,8 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
     }
     const ep = new SoccerEpisode(
       R,
-      a.map((x) => x!.data),
-      b.map((x) => x!.data),
+      a.map((x, i) => ({ data: x!.data, role: rolesA[i] })),
+      b.map((x, i) => ({ data: x!.data, role: rolesB[i] })),
       randomSeed(),
     );
     const names = [a.map((x) => x!.name), b.map((x) => x!.name)];
@@ -159,6 +194,18 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
 
   const setAt = (list: string[], set: (l: string[]) => void, i: number, v: string) => set(list.map((x, j) => (j === i ? v : x)));
 
+  /** 役割を選ぶ。その役割のサッカー脳を鍛えていれば「脳」と表示する */
+  const roleSelect = (roles: SoccerRole[], set: (r: SoccerRole[]) => void, i: number, data: FighterData | undefined) => (
+    <select value={roles[i]} onChange={(e) => set(roles.map((r, j) => (j === i ? (e.target.value as SoccerRole) : r)))}>
+      {SOCCER_ROLE_LIST.map((r) => (
+        <option key={r.role} value={r.role}>
+          {r.label}
+          {data?.soccer?.[r.role] ? '(サッカー脳)' : '(お手本)'}
+        </option>
+      ))}
+    </select>
+  );
+
   return (
     <div className="battle">
       <aside className="panel">
@@ -167,6 +214,43 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
 
         {mode === 'random' ? (
           <RandomMatchPanel charId={charId} character={character} eligible={ready} viewer={() => viewerRef.current} rapier={() => rapierRef.current} />
+        ) : mode === 'jump' ? (
+          <>
+            <p className="muted small">
+              {HIGH_JUMP.interval}秒ごとにジャンプの合図が出て、{HIGH_JUMP.attempts}回跳びます。コアがどれだけ高く上がったか(跳ぶ前からの上がり幅)の、いちばん高い記録で順位を決めます。
+              トレーニング「ジャンプ」で鍛えると高く跳べるようになります(ピストンを下向きに付けるのもおすすめ)。
+            </p>
+            <div className="vs">
+              <div className="vs-name">{character.name}(自分)</div>
+              {runners.map((id, i) => (
+                <select key={i} value={id} onChange={(e) => setAt(runners, setRunners, i, e.target.value)}>
+                  {options(true, false)}
+                </select>
+              ))}
+            </div>
+            <div className="row">
+              <button className="primary" disabled={!ready} onClick={startJump}>
+                スタート
+              </button>
+            </div>
+            {jump && (
+              <div className="result">
+                <div className="result-title">{jump.done ? '結果' : `${Math.max(1, jump.attempt)} / ${HIGH_JUMP.attempts} 回目`}</div>
+                <ol className="ranking">
+                  {jump.result &&
+                    jump.names
+                      .map((n, i) => ({ n, i }))
+                      .sort((a, b) => jump.result!.rank[a.i] - jump.result!.rank[b.i])
+                      .map(({ n, i }) => (
+                        <li key={i}>
+                          {n}:最高 {(jump.result!.best[i] * 100).toFixed(0)}cm
+                          <span className="muted small"> ({jump.result!.heights[i].map((h) => (h * 100).toFixed(0)).join('・')})</span>
+                        </li>
+                      ))}
+                </ol>
+              </div>
+            )}
+          </>
         ) : mode === 'race' ? (
           <>
             <p className="muted small">
@@ -206,23 +290,29 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
         ) : (
           <>
             <p className="muted small">
-              {SOCCER.teamSize}対{SOCCER.teamSize}。各キャラは自分の運動脳で動き、チームの作戦(ボールの後ろに回り込んで押す・守る・支える)で動きます。
-              {SOCCER.timeLimit}秒で得点の多いチームの勝ち。
+              {SOCCER.teamSize}対{SOCCER.teamSize}。選手ごとに役割(シューター:シュートする・キャリアー:ドリブルで運ぶ・ブロッカー:ゴールを守る)を選びます。
+              その役割のサッカー脳をトレーニングで鍛えていればサッカー脳で、なければお手本の動きで動きます。{SOCCER.timeLimit}秒で得点の多いチームの勝ち。
             </p>
             <h3 style={{ color: hex(TEAM_COLORS[0]) }}>チームA(青)</h3>
             <div className="vs">
               {teamA.map((id, i) => (
-                <select key={i} value={id} onChange={(e) => setAt(teamA, setTeamA, i, e.target.value)}>
-                  {options(false, true)}
-                </select>
+                <div key={i} className="soccer-slot">
+                  <select value={id} onChange={(e) => setAt(teamA, setTeamA, i, e.target.value)}>
+                    {options(false, true)}
+                  </select>
+                  {roleSelect(rolesA, setRolesA, i, pick(id)?.data)}
+                </div>
               ))}
             </div>
             <h3 style={{ color: hex(TEAM_COLORS[1]) }}>チームB(橙)</h3>
             <div className="vs">
               {teamB.map((id, i) => (
-                <select key={i} value={id} onChange={(e) => setAt(teamB, setTeamB, i, e.target.value)}>
-                  {options(false, true)}
-                </select>
+                <div key={i} className="soccer-slot">
+                  <select value={id} onChange={(e) => setAt(teamB, setTeamB, i, e.target.value)}>
+                    {options(false, true)}
+                  </select>
+                  {roleSelect(rolesB, setRolesB, i, pick(id)?.data)}
+                </div>
               ))}
             </div>
             <div className="row">

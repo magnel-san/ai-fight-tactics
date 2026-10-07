@@ -2,11 +2,8 @@
 // メニューを順に解放しながら学習させる。学習はWorkerで進め、画面では最新の世代の最優秀個体のエピソードを
 // シードから再現して観戦する(上位個体は半透明のゴーストで重ねる)。
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createDecisionGenome } from '../../core/brain/decision';
-import { createMotorGenome } from '../../core/brain/motor';
 import type { Character } from '../../core/character';
 import { TRAINING, STYLES, type TrainStyle } from '../../core/config';
-import { actuatorCount } from '../../core/creature/blueprint';
 import { Rng } from '../../core/math/rng';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import type { Episode, EpisodeFlags } from '../../core/training/episode';
@@ -19,6 +16,7 @@ import { defaultWorkerCount } from '../../training/WorkerPool';
 import { AwayHighlights, BrainPanel, CompareView, MILESTONE_LABELS, Toasts, type AwaySummary, type Toast } from './extras';
 import { FitnessChart } from './FitnessChart';
 import { battleFighter } from '../../core/character';
+import { BRAIN_LABELS, freshGenome, trainedGenome, withTrained } from '../../core/training/brains';
 import { measureReportInWorker } from '../../training/reportClient';
 import { ReportCardView } from './ReportCardView';
 import { BrainToggle } from '../BrainToggle';
@@ -157,15 +155,12 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
   }, [charId]);
 
   /** 鍛える脳の現在の遺伝子(なければ新しく作る) */
-  const currentGenome = (c: Character, t: TaskName): Float64Array =>
-    TASKS[t].brain === 'motor'
-      ? (c.motor ?? createMotorGenome(actuatorCount(c.blueprint), new Rng(randomSeed())))
-      : (c.decision ?? createDecisionGenome(new Rng(randomSeed())));
+  const currentGenome = (c: Character, t: TaskName): Float64Array => trainedGenome(c, t) ?? freshGenome(c, t, new Rng(randomSeed()));
 
   /** まだ学習していないとき、今の脳の動きを見せる */
   const resetReplay = (t: TaskName) => {
     const c = characterRef.current;
-    if (TASKS[t].brain === 'decision' && !c.motor) {
+    if (TASKS[t].brain !== 'motor' && !c.motor) {
       replay.current = null;
       return;
     }
@@ -330,7 +325,7 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
     const c = characterRef.current;
     const t = task;
     const d = TASKS[t];
-    if (d.brain === 'decision' && !c.motor) {
+    if (d.brain !== 'motor' && !c.motor) {
       setError('先に運動脳を鍛えてください');
       return;
     }
@@ -397,12 +392,7 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
       const generations = { ...prev.progress.generations, [t]: (prev.progress.generations[t] ?? 0) + 1 };
       const passed = r.passed && !prev.progress.passed.includes(t) ? [...prev.progress.passed, t] : prev.progress.passed;
       const milestones = [...(prev.progress.milestones ?? []), ...fresh.filter((k) => !(prev.progress.milestones ?? []).includes(k))];
-      const next: Character = { ...prev, progress: { ...prev.progress, generations, passed, milestones } };
-      if (d.brain === 'motor') next.motor = r.champion;
-      else {
-        next.decision = r.champion;
-        next.decisionStale = false;
-      }
+      const next: Character = withTrained({ ...prev, progress: { ...prev.progress, generations, passed, milestones } }, t, r.champion);
       if (t === 'survive') next.progress.surviveLevel = r.setup.level;
       return next;
     });
@@ -474,7 +464,7 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
                   {OPTIONAL_TASKS.includes(t) && <span className="optional">任意</span>}
                 </span>
                 <span className="menu-meta">
-                  {!unlocked ? '🔒 未解放' : passedList.includes(t) ? '✔ 合格' : `${d.brain === 'motor' ? '運動脳' : '判断脳'}`}
+                  {!unlocked ? '🔒 未解放' : passedList.includes(t) ? '✔ 合格' : BRAIN_LABELS[d.brain]}
                   {(character.progress.generations[t] ?? 0) > 0 && ` ・${character.progress.generations[t]}世代`}
                 </span>
               </button>

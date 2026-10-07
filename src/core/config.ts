@@ -312,29 +312,128 @@ export const RACE = {
   laneWidth: 3,
 } as const;
 
-/** 種目「サッカー」(3対3) */
+/** サッカーの役割:シューター(ボールを取りに行きシュート)・ブロッカー(ゴール前で止める)・キャリアー(拾ってドリブル) */
+export type SoccerRole = 'shooter' | 'blocker' | 'carrier';
+
+/**
+ * 種目「サッカー」(3対3)。ロケットリーグのような、角の丸い半透明の柵で囲まれた大きなフィールド。
+ * 大きなキャラでもゴールに入れるよう、ゴールは幅6m・高さ3m。
+ * ボールは少し低重力(重力の ballGravityScale 倍)で、ballMaxSpeed より速くはならない。ゴールしたら上空から落ちてくる
+ */
 export const SOCCER = {
   /** フィールドの半分の幅(x)と半分の長さ(z) [m] */
-  halfWidth: 5,
-  halfLength: 8,
-  /** ゴールの幅 [m] */
-  goalWidth: 3,
-  /** 壁の高さと厚み [m] */
-  wallHeight: 0.6,
-  wallThickness: 0.3,
-  ballRadius: 0.35,
-  ballMass: 1.0,
-  ballRestitution: 0.5,
+  halfWidth: 9,
+  halfLength: 15,
+  /** 柵の角の丸みの半径 [m] と、丸みを作る板の数 */
+  cornerRadius: 3,
+  cornerSegments: 6,
+  /** ゴールの幅・高さ・奥行き [m] */
+  goalWidth: 6,
+  goalHeight: 3,
+  goalDepth: 2.5,
+  /** 柵の高さと厚み [m]、表示の透明度 */
+  wallHeight: 5,
+  wallThickness: 0.4,
+  wallOpacity: 0.18,
+  ballRadius: 0.55,
+  ballMass: 0.8,
+  ballRestitution: 0.6,
   ballFriction: 0.6,
   /** 転がりを少しずつ弱める */
   ballDamping: 0.3,
-  timeLimit: 90,
+  /** ボールにかかる重力の倍率(少し低重力)と、速さの上限 [m/s] */
+  ballGravityScale: 0.5,
+  ballMaxSpeed: 9,
+  /** ゴールしたあと、ボールを落とす高さ [m] */
+  ballDropHeight: 7,
+  timeLimit: 120,
   teamSize: 3,
-  /** ボールの後ろに回り込む距離 [m]。この距離まで近づいたらゴールへ押し込む */
-  approachOffset: 0.9,
-  pushStartDist: 0.7,
-  /** 守る役がいる位置(自陣ゴールからボールまでの割合) */
-  defendRatio: 0.35,
+  /** シューター:ボールの後ろに回り込む距離 [m]。この距離まで近づいたらゴールへ押し込む */
+  approachOffset: 1.2,
+  pushStartDist: 0.9,
+  /** ブロッカー:ゴールラインから前に出て待つ距離 [m]と、ボールを取りに出る距離 [m] */
+  blockerLine: 2,
+  blockerReach: 7,
+  /** キャリアー:ドリブルのときの速さ */
+  carrySpeed: 0.75,
+} as const;
+
+/**
+ * サッカー脳(役割ごとに1つ):入力19・中間16・出力3(進む方向2・速さ1)。センサー値をそろえる目安 [m]・[m/s]。
+ * 入力の最後の3つは「お手本の動き」(その役割の手書きの動きの向きと速さ)。最初の脳はお手本どおりに動くように作り、
+ * そこから上手になるよう鍛える(何も知らない状態から学ぶと、ボールに触れることすらなかなか覚えないため)
+ */
+export const SOCCER_BRAIN = {
+  inputs: 19,
+  hidden: 16,
+  outputs: 3,
+  posScale: 15,
+  velScale: 6,
+} as const;
+
+/**
+ * サッカーのトレーニング(役割ごとの練習)。1回 time 秒。合格の確認は confirmEpisodes 回のうち confirmPassCount 回
+ *   シューター:相手のブロッカー(自分と同じ体のBOT)が守るゴールにシュートを決める
+ *   ブロッカー:相手陣から飛んでくるシュート(shots 本)を止め、ボールが遠いときはゴール前に戻る
+ *   キャリアー:ボールを拾い、追いかけてくるBOTから守りながら、前へ運ぶ(carryGoal [m] 運べば成功)
+ */
+export const SOCCER_DRILL = {
+  time: 25,
+  confirmEpisodes: 9,
+  confirmPassCount: 3,
+  /** シューター:ゴールの加点、ボールがゴールに近づいた距離の重み [/m]、ボールに近づいた距離の重み [/m] */
+  goalBonus: 20,
+  ownGoalPenalty: 20,
+  ballProgressWeight: 1,
+  approachWeight: 0.3,
+  /**
+   * キャラは歩くのが遅い(標準BOTで秒速0.5mほど)ので、練習はゴールやボールの近くで行う。
+   * シューター:ゴールラインから shooterStart [m] 手前に立ち、ボールはその前 ballAhead [m] あたりに落とす
+   */
+  shooterStart: 7,
+  ballAhead: 2,
+  /** ブロッカー:シュートの本数・間隔 [s]・速さ [m/s]、許せる失点、止めた加点・決められた減点、ゴール前に戻る重み [/s] */
+  shots: 4,
+  shotInterval: 6,
+  shotSpeedMin: 4,
+  shotSpeedMax: 6,
+  allowedGoals: 1,
+  blockBonus: 5,
+  concedePenalty: 10,
+  homeWeight: 0.3,
+  touchBonus: 0.5,
+  /** キャリアー:ボールを持っているとみなす距離 [m]、持っている間の加点 [/s]・前に運んだ距離の重み [/m]、離れている間の減点 [/s] */
+  dribbleRadius: 2,
+  closeBonus: 0.5,
+  carryWeight: 1.5,
+  farPenalty: 0.3,
+  carryGoal: 3,
+  /** キャリアーを追いかけるBOTの速さと、スタートの距離 [m] */
+  chaserSpeed: 0.35,
+  chaserDistance: 12,
+} as const;
+
+/** トレーニング「かけっこ」(全力疾走):RACE.distance を何秒で走れるか。合格は confirmEpisodes 回のうち confirmPassCount 回 passTime 秒以内 */
+export const SPRINT_TASK = {
+  timeLimit: 40,
+  passTime: 30,
+  finishBonus: 10,
+  confirmEpisodes: 3,
+  confirmPassCount: 2,
+} as const;
+
+/** 種目「ジャンプ」:決まった間隔でジャンプ指令を出し、コアがどれだけ高く上がったかの最高記録を競う */
+export const HIGH_JUMP = {
+  /** 1人あたりのジャンプの回数・最初の指令の時刻 [s]・間隔 [s]・1回を測る時間 [s] */
+  attempts: 5,
+  firstAt: 1.5,
+  interval: 3,
+  window: 1.5,
+  /** 一度に跳ぶ人数と、レーンの間隔 [m] */
+  maxJumpers: 4,
+  laneWidth: 3,
+  /** 公式記録のシード(ランキング用) */
+  seeds: [11, 22, 33],
 } as const;
 
 /**

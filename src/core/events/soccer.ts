@@ -1,10 +1,10 @@
-// 種目「サッカー」(3対3)。壁で囲まれた平らなフィールドで、ボールを相手のゴールへ押し込む。
-// 各キャラは自分の運動脳で動き、どこへ向かうかはチームのルール(手書きのAI)が決める:
-//   ボールにいちばん近い1体がボールの後ろへ回り込んでゴールへ押し込み、1体が自陣のゴール前で守り、もう1体は横で支える。
-// ゴールが決まったらボールだけ中央に戻して続ける。時間切れで得点の多い方が勝ち。
+// 種目「サッカー」(3対3)。ロケットリーグ風の、角の丸い半透明の柵で囲まれた大きなフィールド(arena.ts)。
+// 各キャラは自分の運動脳で動き、どこへ向かうかは役割(シューター・ブロッカー・キャリアー)で決まる。
+// その役割のサッカー脳を鍛えていればサッカー脳が、なければ手書きの動き(soccerRules.ts)が決める。
+// ゴールが決まったら、ボールを上空から落とし直して続ける。時間切れで得点の多い方が勝ち。
 import type { RigidBody } from '@dimforge/rapier3d-compat';
-import type { MotorCommand } from '../brain/motor';
-import { SOCCER } from '../config';
+import { SoccerBrain } from '../brain/soccer';
+import { SOCCER, type SoccerRole } from '../config';
 import { atan2 } from '../math/fmath';
 import { Rng } from '../math/rng';
 import type { Rapier } from '../physics/rapier';
@@ -12,6 +12,8 @@ import { Fighter } from '../sim/fighter';
 import { EpisodeBase, type EpisodeProps } from '../training/episode';
 import { spawnHeight } from '../training/move';
 import type { FighterData } from '../training/tasks';
+import { ballOut, buildArena, clampBallSpeed, createBall, dropBall, enemyGoalZ, goalAt } from './arena';
+import { ruleCommand } from './soccerRules';
 
 export interface SoccerResult {
   /** チーム0・チーム1の得点 */
@@ -22,77 +24,69 @@ export interface SoccerResult {
   goals: { time: number; team: number }[];
 }
 
-const FIELD = 0x3f6b46;
-const WALL = 0x9aa5b1;
-const GOAL = [0x56ccf2, 0xff8a3d];
-
-/** 水平距離(Math.hypot は環境によって結果がずれる可能性があるので使わない) */
-function len(x: number, z: number): number {
-  return Math.sqrt(x * x + z * z);
+/** 試合に出る選手:キャラのデータと役割 */
+export interface SoccerPlayer {
+  data: FighterData;
+  role: SoccerRole;
 }
+
+/** 既定の役割の並び(チームの1人目・2人目・3人目) */
+export const DEFAULT_ROLES: readonly SoccerRole[] = ['shooter', 'carrier', 'blocker'];
+
+/** 役割ごとの、チーム0から見たスタート位置(-z 側が自陣) */
+const SPOTS: Record<SoccerRole, { x: number; z: number }> = {
+  shooter: { x: 0, z: -4 },
+  carrier: { x: -4, z: -6 },
+  blocker: { x: 0, z: -(SOCCER.halfLength - SOCCER.blockerLine) },
+};
 
 export class SoccerEpisode extends EpisodeBase {
   readonly ball: RigidBody;
   readonly props: EpisodeProps;
   readonly teams: number[];
-  readonly view = { x: 0, z: 0, distance: 18 };
+  readonly roles: SoccerRole[];
+  readonly view = { x: 0, z: 0, distance: 34 };
   private score: [number, number] = [0, 0];
   private goals: { time: number; team: number }[] = [];
+  private brains: (SoccerBrain | null)[];
 
-  constructor(R: Rapier, teamA: FighterData[], teamB: FighterData[], seed: number) {
+  constructor(R: Rapier, teamA: SoccerPlayer[], teamB: SoccerPlayer[], seed: number) {
     super(R);
     const rng = new Rng(seed);
-    const { halfWidth: W, halfLength: L, goalWidth: G, wallHeight: H, wallThickness: T } = SOCCER;
+    const boxes = buildArena(R, this.world);
+    // ボールは中央の少し上から落とす
+    this.ball = createBall(R, this.world, rng.range(-0.3, 0.3), 2, rng.range(-0.3, 0.3));
 
-    // フィールドと壁(ゴールの部分は壁をあけ、奥に箱を置いてボールを受け止める)
-    const boxes: EpisodeProps['boxes'] = [];
-    const fixed = (x: number, y: number, z: number, hx: number, hy: number, hz: number, color: number, opacity?: number) => {
-      this.world.createCollider(R.ColliderDesc.cuboid(hx, hy, hz).setTranslation(x, y, z).setFriction(0.8));
-      boxes.push({ x, y, z, hx, hy, hz, color, opacity });
-    };
-    fixed(0, -0.1, 0, W + 2, 0.1, L + 2, FIELD);
-    fixed(-W - T / 2, H / 2, 0, T / 2, H / 2, L + T, WALL);
-    fixed(W + T / 2, H / 2, 0, T / 2, H / 2, L + T, WALL);
-    const side = (W - G / 2) / 2;
-    for (const sz of [-1, 1]) {
-      fixed(-(G / 2 + side), H / 2, sz * (L + T / 2), side, H / 2, T / 2, WALL);
-      fixed(G / 2 + side, H / 2, sz * (L + T / 2), side, H / 2, T / 2, WALL);
-      // ゴールの奥(ネット)
-      fixed(0, H / 2, sz * (L + 1.2), G / 2 + T, H / 2, T / 2, GOAL[sz < 0 ? 0 : 1], 0.5);
-      fixed(-(G / 2 + T / 2), H / 2, sz * (L + 0.6), T / 2, H / 2, 0.6, GOAL[sz < 0 ? 0 : 1], 0.5);
-      fixed(G / 2 + T / 2, H / 2, sz * (L + 0.6), T / 2, H / 2, 0.6, GOAL[sz < 0 ? 0 : 1], 0.5);
-    }
-
-    // ボール
-    this.ball = this.world.createRigidBody(
-      R.RigidBodyDesc.dynamic().setTranslation(0, SOCCER.ballRadius + 0.2, 0).setLinearDamping(SOCCER.ballDamping).setAngularDamping(SOCCER.ballDamping).setCanSleep(false),
-    );
-    this.world.createCollider(
-      R.ColliderDesc.ball(SOCCER.ballRadius).setMass(SOCCER.ballMass).setRestitution(SOCCER.ballRestitution).setFriction(SOCCER.ballFriction),
-      this.ball,
-    );
-
-    // 選手:チーム0は手前(-z)、チーム1は奥(+z)。相手のゴールの方を向く
-    const spots = [
-      { x: 0, z: 2.5 },
-      { x: -2.5, z: 5 },
-      { x: 2.5, z: 5 },
-    ];
     this.teams = [];
+    this.roles = [];
     this.fighters = [];
+    this.brains = [];
     [teamA, teamB].forEach((team, ti) => {
-      team.slice(0, SOCCER.teamSize).forEach((d, i) => {
-        const s = spots[i];
-        const z = ti === 0 ? -s.z : s.z;
-        const x = (ti === 0 ? s.x : -s.x) + rng.range(-0.2, 0.2);
+      team.slice(0, SOCCER.teamSize).forEach((pl) => {
+        const s = SPOTS[pl.role];
+        // 同じ役割が2人いても重ならないよう、少しずらす
+        const dup = team.filter((o) => o.role === pl.role).indexOf(pl);
+        const x = (ti === 0 ? s.x : -s.x) + dup * 3 + rng.range(-0.2, 0.2);
+        const z = ti === 0 ? s.z : -s.z;
         this.fighters.push(
-          new Fighter(R, this.world, d.blueprint, d.motor, { position: { x, y: spawnHeight(d.blueprint), z }, yaw: atan2(0, ti === 0 ? 1 : -1) }),
+          new Fighter(R, this.world, pl.data.blueprint, pl.data.motor, {
+            position: { x, y: spawnHeight(pl.data.blueprint), z },
+            yaw: atan2(0, ti === 0 ? 1 : -1),
+          }),
         );
         this.teams.push(ti);
+        this.roles.push(pl.role);
+        const g = pl.data.soccer?.[pl.role];
+        this.brains.push(g ? new SoccerBrain(g) : null);
       });
     });
 
     this.props = { spheres: [{ body: this.ball, radius: SOCCER.ballRadius, color: 0xf5f5f5 }], boxes };
+  }
+
+  /** サッカー脳で動いているか(画面の表示用) */
+  usesBrain(i: number): boolean {
+    return this.brains[i] !== null;
   }
 
   result(): SoccerResult {
@@ -100,24 +94,24 @@ export class SoccerEpisode extends EpisodeBase {
     return { score: [a, b], winner: a === b ? null : a > b ? 0 : 1, goals: [...this.goals] };
   }
 
+  advance(): void {
+    super.advance();
+    clampBallSpeed(this.ball);
+  }
+
   protected think(): void {
     const t = this.time;
     const p = this.ball.translation();
+    const bv = this.ball.linvel();
 
-    // ゴール判定:ボールがゴールの線を越えた
-    if (Math.abs(p.x) < SOCCER.goalWidth / 2 && Math.abs(p.z) > SOCCER.halfLength + SOCCER.ballRadius) {
-      const team = p.z > 0 ? 0 : 1; // +z 側のゴールに入ったらチーム0の得点
+    // ゴール:+z 側に入ったらチーム0の得点。決まったら上空からボールを落とし直す
+    const g = goalAt(p);
+    if (g !== 0) {
+      const team = g > 0 ? 0 : 1;
       this.score[team]++;
       this.goals.push({ time: t, team });
-      this.ball.setTranslation({ x: 0, y: SOCCER.ballRadius + 0.2, z: 0 }, true);
-      this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      this.ball.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    }
-    // フィールドの外へ飛び出したボールも中央に戻す
-    if (!Number.isFinite(p.x) || p.y < -2 || Math.abs(p.x) > SOCCER.halfWidth + 2 || Math.abs(p.z) > SOCCER.halfLength + 3) {
-      this.ball.setTranslation({ x: 0, y: SOCCER.ballRadius + 0.2, z: 0 }, true);
-      this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    }
+      dropBall(this.ball);
+    } else if (ballOut(p)) dropBall(this.ball);
 
     if (t >= SOCCER.timeLimit) {
       const r = this.result();
@@ -129,48 +123,39 @@ export class SoccerEpisode extends EpisodeBase {
       return;
     }
 
-    // チームごとに、ボールにいちばん近い選手を「攻め」、ゴールにいちばん近い残りを「守り」、残りを「支え」にする
-    for (const team of [0, 1]) {
-      const members = this.fighters.map((f, i) => ({ f, i })).filter((m) => this.teams[m.i] === team && m.f.isFinite());
-      if (members.length === 0) continue;
-      const dist = (f: Fighter, x: number, z: number) => {
-        const q = f.position();
-        return len(q.x - x, q.z - z);
-      };
-      const ownGoalZ = team === 0 ? -SOCCER.halfLength : SOCCER.halfLength;
-      const attacker = members.reduce((a, b) => (dist(b.f, p.x, p.z) < dist(a.f, p.x, p.z) ? b : a));
-      const rest = members.filter((m) => m !== attacker);
-      const defender = rest.length ? rest.reduce((a, b) => (dist(b.f, 0, ownGoalZ) < dist(a.f, 0, ownGoalZ) ? b : a)) : null;
-      for (const m of members) {
-        const role = m === attacker ? 'attack' : m === defender ? 'defend' : 'support';
-        m.f.command = this.command(m.f, team, role, p);
-        m.f.drive(t);
-      }
-    }
+    this.fighters.forEach((f, i) => {
+      if (!f.isFinite()) return;
+      const team = this.teams[i];
+      const brain = this.brains[i];
+      if (brain) {
+        f.command = brain.think({
+          self: f,
+          ball: p,
+          ballVel: bv,
+          enemyGoalZ: enemyGoalZ(team),
+          ownGoalZ: enemyGoalZ(1 - team),
+          opponent: this.nearestOpponent(i),
+          timeRatio: t / SOCCER.timeLimit,
+          rule: ruleCommand(this.roles[i], f, team, p),
+        });
+      } else f.command = ruleCommand(this.roles[i], f, team, p);
+      f.drive(t);
+    });
   }
 
-  /** 役割ごとの指令(ワールドの水平方向と速さ) */
-  private command(f: Fighter, team: number, role: 'attack' | 'defend' | 'support', ball: { x: number; z: number }): MotorCommand {
-    const me = f.position();
-    const goalZ = team === 0 ? SOCCER.halfLength : -SOCCER.halfLength;
-    const ownGoalZ = -goalZ;
-    const to = (x: number, z: number): MotorCommand => ({ dirX: x - me.x, dirZ: z - me.z, speed: 1 });
-    if (role === 'attack') {
-      // ボールから見て相手のゴールの反対側(ボールの後ろ)に回り込み、近づいたらゴールの方へ押す
-      const gx = 0 - ball.x;
-      const gz = goalZ - ball.z;
-      const gl = len(gx, gz) || 1;
-      const bx = ball.x - (gx / gl) * SOCCER.approachOffset;
-      const bz = ball.z - (gz / gl) * SOCCER.approachOffset;
-      if (len(me.x - bx, me.z - bz) < SOCCER.pushStartDist) return { dirX: gx, dirZ: gz, speed: 1 };
-      return to(bx, bz);
-    }
-    if (role === 'defend') {
-      return to(ball.x * SOCCER.defendRatio, ownGoalZ + (ball.z - ownGoalZ) * SOCCER.defendRatio);
-    }
-    // 支え:ボールの横、少し相手のゴール寄り
-    const sideX = ball.x > 0 ? ball.x - 2.5 : ball.x + 2.5;
-    return to(Math.max(-SOCCER.halfWidth + 1, Math.min(SOCCER.halfWidth - 1, sideX)), ball.z + Math.sign(goalZ) * 1.5);
+  private nearestOpponent(i: number): Fighter | null {
+    const me = this.fighters[i].position();
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    this.fighters.forEach((f, j) => {
+      if (this.teams[j] === this.teams[i] || !f.isFinite()) return;
+      const q = f.position();
+      const d = (q.x - me.x) ** 2 + (q.z - me.z) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = f;
+      }
+    });
+    return best;
   }
 }
-

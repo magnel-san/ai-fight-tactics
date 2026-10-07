@@ -1,6 +1,6 @@
 // キャラ1体分のデータ(仕様書セクション12):設計図 + 2つの脳 + 育成状況。
 import type { Blueprint } from './creature/blueprint';
-import type { TrainStyle } from './config';
+import type { SoccerRole, TrainStyle } from './config';
 import type { ReportCard } from './training/report';
 import type { FighterData, TaskName } from './training/tasks';
 
@@ -24,6 +24,8 @@ export interface Character {
   blueprint: Blueprint;
   motor: Float64Array | null;
   decision: Float64Array | null;
+  /** サッカー脳(役割ごと。サッカーのトレーニングで鍛える) */
+  soccer?: Partial<Record<SoccerRole, Float64Array>>;
   progress: Progress;
   /** 体を組み直した後で、判断脳の再トレーニングを勧める */
   decisionStale?: boolean;
@@ -49,11 +51,12 @@ export function canEnter(c: Character): boolean {
  * バトルに出すときのデータ。判断脳があればそれで戦い、なければ相手に向かって突進する(突進BOTと同じ作戦)。
  * 運動脳がなければ出られない(null)
  */
-export function battleFighter(c: Pick<Character, 'blueprint' | 'motor' | 'decision'>): FighterData | null {
+export function battleFighter(c: Pick<Character, 'blueprint' | 'motor' | 'decision' | 'soccer'>): FighterData | null {
   if (!c.motor) return null;
+  const soccer = c.soccer && Object.keys(c.soccer).length > 0 ? { soccer: c.soccer } : {};
   return c.decision
-    ? { blueprint: c.blueprint, motor: c.motor, decision: c.decision, controller: 'brain' }
-    : { blueprint: c.blueprint, motor: c.motor, decision: null, controller: 'rush' };
+    ? { blueprint: c.blueprint, motor: c.motor, decision: c.decision, controller: 'brain', ...soccer }
+    : { blueprint: c.blueprint, motor: c.motor, decision: null, controller: 'rush', ...soccer };
 }
 
 export function newCharacter(name: string, blueprint: Blueprint): Character {

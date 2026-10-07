@@ -174,7 +174,8 @@ export class Trainer {
         this.selfSnapshot = Float64Array.from(this.lastChampion);
         this.updateOpponents();
       }
-      const decisionTask = task.brain === 'decision';
+      // 判断脳・サッカー脳のメニューは試合の運に左右されやすいので、評価を多めにして選び直す
+      const decisionTask = task.brain !== 'motor';
       const episodes = decisionTask ? TRAINING.decisionEpisodesPerGeneration : TRAINING.episodesPerGeneration;
       const seeds = Array.from({ length: episodes }, () => this.rng.nextU32());
       const setup = { ...this.setup };
