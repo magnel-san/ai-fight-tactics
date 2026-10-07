@@ -60,10 +60,11 @@ describe('ステージの物理メッシュ', () => {
     expect(m.indices.length / 3).toBe(127 * 6 + 78 * 2);
     // 隣り合うタイルの角は頂点を共有する(中心127 + 角の頂点 + 壁の下端)
     const corners = new Set<string>();
-    for (const t of tiles) for (let k = 0; k < 6; k++) {
-      const a = (Math.PI / 3) * k + Math.PI / 6;
-      corners.add(`${Math.round((t.x + 0.6 * Math.cos(a)) * 1e4)},${Math.round((t.z + 0.6 * Math.sin(a)) * 1e4)}`);
-    }
+    for (const t of tiles)
+      for (let k = 0; k < 6; k++) {
+        const a = (Math.PI / 3) * k + Math.PI / 6;
+        corners.add(`${Math.round((t.x + 0.6 * Math.cos(a)) * 1e4)},${Math.round((t.z + 0.6 * Math.sin(a)) * 1e4)}`);
+      }
     expect(m.vertices.length / 3).toBe(127 + corners.size + 78);
   });
 
@@ -144,14 +145,15 @@ describe('崩落ルール', () => {
     world.free();
   });
 
-  it('ルールC:20秒後からランダム崩落が始まり、間隔は4秒から90秒時点の1秒へ短くなる', () => {
-    expect(randomInterval(20)).toBe(4);
-    expect(randomInterval(55)).toBeCloseTo(2.5, 9);
-    expect(randomInterval(90)).toBe(1);
-    expect(randomInterval(200)).toBe(1);
-    // 安全円の縮小が起きない「中心」をずっと見ていても、20秒後には安全円の内側に危険マークが出る
+  it('ルールC:開始時刻からランダム崩落が始まり、間隔は4秒から90秒時点の1秒へ短くなる', () => {
+    const start = STAGE.randomStart;
+    expect(randomInterval(start)).toBe(STAGE.randomIntervalStart);
+    expect(randomInterval((start + STAGE.randomIntervalEndTime) / 2)).toBeCloseTo((STAGE.randomIntervalStart + STAGE.randomIntervalEnd) / 2, 9);
+    expect(randomInterval(STAGE.randomIntervalEndTime)).toBe(STAGE.randomIntervalEnd);
+    expect(randomInterval(200)).toBe(STAGE.randomIntervalEnd);
+    // 安全円の縮小が起きない「中心」をずっと見ていても、開始時刻を過ぎると安全円の内側に危険マークが出る
     const { world, stage } = newStage(9);
-    tick(stage, 19.9);
+    tick(stage, STAGE.randomStart - 0.1);
     const inside = () => stage.tiles.filter((t) => t.state !== 'safe' && !stage.isOutsideSafe(t)).length;
     expect(inside()).toBe(0);
     tick(stage, 0.2);

@@ -6,6 +6,7 @@ import { cos } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
 import { applyBlockForces } from '../creature/assemble';
+import { cylinderAxis, shapeOf } from '../creature/blueprint';
 import type { Fighter } from '../sim/fighter';
 import type { Stage } from '../stage/stage';
 
@@ -123,14 +124,37 @@ export abstract class EpisodeBase implements Episode {
     this.finished = true;
   }
 
-  /** 姿勢の報酬:コアの傾きと、前後・左右に転がる回転の速さで減点する(向きを変える回転は減点しない) */
+  /**
+   * 姿勢の報酬:コアの傾きと、前後・左右に転がる回転の速さで減点する(向きを変える回転は減点しない)。
+   * コアが球なら転がって進んでよいので減点しない。コアが横向きの円柱なら、円柱の軸まわりに転がるのは減点せず、
+   * 傾きは「円柱の軸が水平からずれた量」で測る
+   */
   private applyPosture(): void {
-    const core = this.fighters[0].core;
-    const up = rotate(core.rotation(), 0, 1, 0);
+    const fighter = this.fighters[0];
+    const coreSpec = fighter.creature.blueprint.blocks[0];
+    const shape = shapeOf(coreSpec);
+    if (shape === 'sphere') return;
+    const core = fighter.core;
+    const q = core.rotation();
     const w = core.angvel();
-    const roll = Math.sqrt(w.x * w.x + w.z * w.z);
+    let wx = w.x;
+    let wz = w.z;
+    let tilt: number;
+    const axis = shape === 'cylinder' ? cylinderAxis(coreSpec) : 'y';
+    if (axis !== 'y') {
+      // 円柱の軸(ワールド座標)。軸まわりの回転は転がりとして許す
+      const a = rotate(q, axis === 'x' ? 1 : 0, 0, axis === 'z' ? 1 : 0);
+      const along = w.x * a[0] + w.y * a[1] + w.z * a[2];
+      wx -= along * a[0];
+      wz -= along * a[2];
+      // 軸が水平なら傾き0。cos θ = 軸の水平成分の長さ
+      tilt = 1 - Math.sqrt(Math.max(0, 1 - a[1] * a[1]));
+    } else {
+      const up = rotate(q, 0, 1, 0);
+      tilt = 1 - Math.max(-1, Math.min(1, up[1]));
+    }
+    const roll = Math.sqrt(wx * wx + wz * wz);
     // 傾き(1 − cos θ)と転がる回転の速さのうち、許容範囲を超えた分だけを 0〜1 にして減点する
-    const tilt = 1 - Math.max(-1, Math.min(1, up[1]));
     const tiltFree = 1 - cos(POSTURE.tiltFree);
     const tiltOver = Math.max(0, Math.min(1, (tilt - tiltFree) / (1 - tiltFree)));
     const rollOver = Math.max(0, Math.min(1, (roll - POSTURE.rollFree) / (POSTURE.rollScale - POSTURE.rollFree)));

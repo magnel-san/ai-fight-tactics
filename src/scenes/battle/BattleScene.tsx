@@ -285,7 +285,7 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
           <li>先にコアが落ちた方の負け。{BATTLE.timeLimit}秒で引き分け</li>
           <li>安全円(黄色い輪)の外のタイルは崩れる</li>
           <li>同じタイルに{STAGE.stayLimit}秒いると崩れ始める</li>
-          <li>20秒後からランダムにタイルが崩れる</li>
+          <li>{STAGE.randomStart}秒後からランダムにタイルが崩れる</li>
         </ul>
       </aside>
 

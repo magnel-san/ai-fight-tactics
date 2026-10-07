@@ -143,13 +143,19 @@ export const STAGE = {
    */
   stayLimit: 5.0,
   stayDecayRatio: 0.5,
-  /** ルールC:ランダム崩落の開始 [s]、初期間隔 [s]、最終間隔 [s]、最終間隔に達する時刻 [s] */
-  randomStart: 20,
+  /**
+   * ルールC:ランダム崩落の開始 [s]、初期間隔 [s]、最終間隔 [s]、最終間隔に達する時刻 [s]。
+   * 開始は20秒から12秒に早めた(バトルの4割が20秒より前に決着し、崩落の判断が勝敗に効いていなかったため)
+   */
+  randomStart: 12,
   randomIntervalStart: 4,
   randomIntervalEnd: 1,
   randomIntervalEndTime: 90,
-  /** スポーン:2体の間の距離(マス。中心を挟んで半分ずつ離れる)、落下高さ [m] */
-  spawnDistance: 3,
+  /**
+   * スポーン:2体の間の距離(マス。中心を挟んで半分ずつ離れる)、落下高さ [m]。
+   * 3マスから5マスに広げた(近すぎると開始直後の押し合いだけで決まり、崩落ステージでの立ち回りが効かなかったため)
+   */
+  spawnDistance: 5,
   spawnHeight: 0.5,
   /** タイルの厚さ [m](上面が y = 0) */
   tileHeight: 0.4,
