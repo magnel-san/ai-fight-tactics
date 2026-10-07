@@ -1,7 +1,7 @@
 // オンライン画面:キャラを登録して、ほかのプレイヤーのキャラと非同期で対戦する。
 // 対戦は自分のブラウザ内で行う。取得したキャラは「受け取ったキャラ」として保存して対戦できる。
 import { useEffect, useState } from 'react';
-import type { Character } from '../../core/character';
+import { canEnter, type Character } from '../../core/character';
 import { jointCount, totalCost } from '../../core/creature/blueprint';
 import { TASKS } from '../../core/training/tasks';
 import {
@@ -73,7 +73,7 @@ export function OnlineScene({ charId, character, active, onBattle, onAddToPool }
     );
   }
 
-  const ready = !!character.motor && !!character.decision;
+  const ready = canEnter(character);
 
   return (
     <div className="library">
@@ -105,7 +105,7 @@ export function OnlineScene({ charId, character, active, onBattle, onAddToPool }
             「{character.name}」を登録・更新
           </button>
         </div>
-        {!ready && <p className="message">運動脳と判断脳を鍛えたキャラだけ登録できます</p>}
+        {!ready && <p className="message">トレーニング「2. 対象を追う」に合格したキャラだけ登録できます</p>}
         {message && <p className={message.error ? 'message error' : 'message'}>{message.text}</p>}
         <h3>登録済み</h3>
         <ul className="list">

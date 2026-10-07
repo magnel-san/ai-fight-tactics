@@ -2,7 +2,7 @@
 // 対戦はすべて自分のブラウザ内で行い、サーバーにはキャラのデータだけを置く(非同期対戦)。
 // 取得したキャラは信用せず、parseCharacter() で検証してから使う。
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { Character } from '../core/character';
+import { canEnter, type Character } from '../core/character';
 import { characterToJson, parseCharacter } from '../core/codec';
 
 const URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -67,7 +67,7 @@ function toOnline(row: Row, me: string): OnlineCharacter | null {
 
 /** キャラを登録する(すでに登録したキャラなら上書きする) */
 export async function registerCharacter(c: Character, onlineId?: string): Promise<string> {
-  if (!c.motor || !c.decision) throw new Error('運動脳と判断脳を鍛えたキャラだけ登録できます');
+  if (!canEnter(c)) throw new Error('トレーニング「2. 対象を追う」に合格したキャラだけ登録できます');
   await ensureSession();
   const json = characterToJson({ ...c, readOnly: false });
   const sb = supabaseClient();

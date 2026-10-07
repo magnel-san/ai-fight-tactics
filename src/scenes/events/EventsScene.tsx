@@ -21,9 +21,13 @@ interface Props {
   /** 参加できる相手(バトルの対戦相手の一覧と同じ) */
   entries: OpponentEntry[];
   active: boolean;
+  /** 表示する種目(対戦タブの切り替えで選ぶ) */
+  mode: EventMode;
 }
 
-type Mode = 'race' | 'soccer' | 'random';
+export type EventMode = 'race' | 'soccer' | 'random';
+type Mode = EventMode;
+const MODE_TITLES: Record<Mode, string> = { race: 'かけっこ', soccer: 'サッカー(3対3)', random: 'ランダムマッチ' };
 const NONE = '';
 const ME = '__me__';
 const randomSeed = () => (Math.random() * 2 ** 32) | 0;
@@ -32,11 +36,10 @@ const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 /** 種目に参加するために合格が必要なトレーニング(トーナメント・ランダムマッチと同じ) */
 export const EVENT_REQUIRED_TASK: TaskName = ENTRY_REQUIRED_TASK;
 
-export function EventsScene({ charId, character, entries, active }: Props) {
+export function EventsScene({ charId, character, entries, active, mode }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<EpisodeViewer | null>(null);
   const rapierRef = useRef<Rapier | null>(null);
-  const [mode, setMode] = useState<Mode>('race');
   const [speed, setSpeed] = useState<1 | 4>(1);
   // かけっこ:自分 + 最大3体
   const [runners, setRunners] = useState<string[]>([entries[1]?.id ?? entries[0]?.id ?? NONE, entries[0]?.id ?? NONE, NONE]);
@@ -53,6 +56,7 @@ export function EventsScene({ charId, character, entries, active }: Props) {
   useEffect(() => {
     const viewer = new EpisodeViewer(canvasRef.current!);
     viewer.endPause = Infinity;
+    viewer.showNothing();
     viewerRef.current = viewer;
     let cancelled = false;
     initRapier().then((R) => {
@@ -153,19 +157,8 @@ export function EventsScene({ charId, character, entries, active }: Props) {
   return (
     <div className="battle">
       <aside className="panel">
-        <h2>種目</h2>
-        <div className="segmented">
-          <button className={mode === 'race' ? 'selected' : ''} onClick={() => setMode('race')}>
-            かけっこ
-          </button>
-          <button className={mode === 'soccer' ? 'selected' : ''} onClick={() => setMode('soccer')}>
-            サッカー
-          </button>
-          <button className={mode === 'random' ? 'selected' : ''} onClick={() => setMode('random')}>
-            ランダムマッチ
-          </button>
-        </div>
-        {!ready && <p className="message">トレーニング「{TASKS[EVENT_REQUIRED_TASK].label}」に合格すると参加できます</p>}
+        <h2>{MODE_TITLES[mode]}</h2>
+        {!ready && <p className="message">トレーニング「2. {TASKS[EVENT_REQUIRED_TASK].label}」に合格すると参加できます</p>}
 
         {mode === 'random' ? (
           <RandomMatchPanel

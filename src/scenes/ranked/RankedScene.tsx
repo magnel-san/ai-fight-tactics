@@ -30,6 +30,8 @@ interface Props {
   charId: string;
   character: Character;
   active: boolean;
+  /** 表示する画面(オンラインタブの切り替えで選ぶ):配信・ランキング・出場登録 */
+  view: RankedView;
 }
 
 interface LiveMatch {
@@ -48,7 +50,9 @@ interface LiveTournament {
   matches: LiveMatch[];
 }
 
-type View = 'live' | 'ranking' | 'entry';
+export type RankedView = 'live' | 'ranking' | 'entry';
+type View = RankedView;
+const VIEW_TITLES: Record<View, string> = { live: 'トーナメント配信', ranking: 'ランキング', entry: '出場登録' };
 type SortKey = 'rating' | 'wins' | 'race';
 /** ランキングの部門:トーナメントとランダムマッチ(レートは別々) */
 type Division = 'tournament' | 'random';
@@ -162,11 +166,10 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-export function RankedScene({ charId, character, active }: Props) {
+export function RankedScene({ charId, character, active, view }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<EpisodeViewer | null>(null);
   const rapierRef = useRef<Rapier | null>(null);
-  const [view, setView] = useState<View>('live');
   const [sortKey, setSortKey] = useState<SortKey>('rating');
   const [division, setDivision] = useState<Division>('tournament');
   // サーバーから取得してブラウザに保存している情報(取得するのは、開いたとき・トーナメントの開始・更新ボタンのときだけ)
@@ -645,18 +648,7 @@ export function RankedScene({ charId, character, active }: Props) {
   return (
     <div className="battle">
       <aside className="panel">
-        <h2>ランクマッチ</h2>
-        <div className="segmented">
-          <button className={view === 'live' ? 'selected' : ''} onClick={() => setView('live')}>
-            配信
-          </button>
-          <button className={view === 'ranking' ? 'selected' : ''} onClick={() => setView('ranking')}>
-            ランキング
-          </button>
-          <button className={view === 'entry' ? 'selected' : ''} onClick={() => setView('entry')}>
-            登録
-          </button>
-        </div>
+        <h2>{VIEW_TITLES[view]}</h2>
         <div className="refresh-row">
           <span className="muted small">
             {snap.syncedAt ? `最終更新 ${new Date(snap.syncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'まだ取得していません'}

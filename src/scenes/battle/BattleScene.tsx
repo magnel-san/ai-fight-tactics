@@ -1,7 +1,7 @@
 // バトル画面(仕様書セクション11)。育てたキャラとBOT・保存キャラ・友人のキャラを、崩落ステージで戦わせて観戦する。
 // 試合はシードと両キャラのデータだけで決まるので、同じ試合をいつでも再生できる。
 import { useEffect, useRef, useState } from 'react';
-import type { Character } from '../../core/character';
+import { battleFighter, type Character } from '../../core/character';
 import { BATTLE, STAGE } from '../../core/config';
 import { initRapier, type Rapier } from '../../core/physics/rapier';
 import { MatchEpisode, type MatchResult } from '../../core/sim/match';
@@ -57,7 +57,7 @@ const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 function reviewHint(result: MatchResult): string | null {
   if (result.winner === 0) return null;
   const cause = result.causes[0];
-  if (cause === 'pushed') return '押し出されて負けました。グリップで踏ん張れる体にするか、「BOTとの押し合い」で押し返し方を鍛えましょう。';
+  if (cause === 'pushed') return '押し出されて負けました。足を「摩擦オン」にして踏ん張れる体にするか、「BOTとの押し合い」で押し返し方を鍛えましょう。';
   if (cause === 'fell') return '自分で落ちてしまいました。「崩落ステージを生き残る」で危ないタイルを避ける判断を鍛えましょう。';
   return '引き分けでした。相手を押し出す力を「BOTとの押し合い」で鍛えると勝ちやすくなります。';
 }
@@ -88,11 +88,13 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
   }, [firstId]);
 
   const opponent = opponents.find((o) => o.id === opponentId) ?? opponents[0];
-  const ready = !!character.motor && !!character.decision;
+  // 運動脳があれば戦える(判断脳がなければ相手に向かって突進する)
+  const ready = !!character.motor;
 
   useEffect(() => {
     const viewer = new EpisodeViewer(canvasRef.current!);
     viewer.endPause = Infinity;
+    viewer.showNothing();
     viewerRef.current = viewer;
     let cancelled = false;
     initRapier().then((R) => {
@@ -168,14 +170,14 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
 
   const start = (skipToEnd = false) => {
     if (!ready) {
-      setError('運動脳と判断脳を鍛えてから戦わせましょう');
+      setError('トレーニングで運動脳を鍛えてから戦わせましょう');
       return;
     }
     if (!opponent) {
       setError('対戦相手がいません');
       return;
     }
-    const me: FighterData = { blueprint: character.blueprint, motor: character.motor!, decision: character.decision!, controller: 'brain' };
+    const me: FighterData = battleFighter(character)!;
     play({ seed: randomSeed(), names: [character.name, opponent.label], fighters: [me, opponent.data] }, skipToEnd, true);
   };
 
@@ -199,7 +201,10 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
             ))}
           </select>
         </div>
-        {!ready && <p className="message">運動脳と判断脳を鍛えると戦えます(トレーニングの「崩落ステージを生き残る」まで)</p>}
+        {!ready && <p className="message">トレーニングの「1. 目標地点への移動」に合格すると戦えます</p>}
+        {ready && !character.decision && (
+          <p className="muted small">判断脳をまだ鍛えていないので、相手に向かって突進します。「危険なタイルを避ける」以降のトレーニングで判断脳を鍛えると、作戦を考えて戦います</p>
+        )}
         {opponents.length === 0 && <p className="message">対戦相手がいません</p>}
         <div className="row">
           <button className="primary" onClick={() => start()} disabled={!ready || !opponent}>

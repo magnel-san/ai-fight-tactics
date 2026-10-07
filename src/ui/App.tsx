@@ -1,32 +1,50 @@
-// トップ画面。キャラクリエイト・トレーニング・バトル・種目・ランクマッチ・マイキャラ・オンラインを切り替える。
+// トップ画面。あそびかた・キャラ作成・トレーニング・対戦・オンライン・マイキャラを切り替える。
+// 対戦(バトル・かけっこ・サッカー・ランダムマッチ)とオンライン(トーナメント配信・ランキング・出場登録・キャラ交換)は、
+// タブの中でさらに切り替える。
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { rebuildBody } from '../core/character';
+import { battleFighter, rebuildBody } from '../core/character';
 import { parseCharacter } from '../core/codec';
 import type { Blueprint } from '../core/creature/blueprint';
 import type { FighterData } from '../core/training/tasks';
 import { pushOpponents } from '../data/bots';
 import { BattleScene, type BattleRecord, type OpponentEntry } from '../scenes/battle/BattleScene';
 import { CreateScene } from '../scenes/create/CreateScene';
-import { EVENT_REQUIRED_TASK, EventsScene } from '../scenes/events/EventsScene';
+import { EVENT_REQUIRED_TASK, EventsScene, type EventMode } from '../scenes/events/EventsScene';
+import { GuideScene, type GuideTarget } from '../scenes/guide/GuideScene';
 import { LibraryScene } from '../scenes/library/LibraryScene';
 import { OnlineScene } from '../scenes/online/OnlineScene';
-import { RankedScene } from '../scenes/ranked/RankedScene';
+import { RankedScene, type RankedView } from '../scenes/ranked/RankedScene';
 import { TrainScene, type TrainReplay } from '../scenes/train/TrainScene';
-import { newId, saveCharacter, saveReplay, type StoredReplay } from '../storage/db';
+import { getSetting, newId, saveCharacter, saveReplay, setSetting, type StoredReplay } from '../storage/db';
 import type { Opponent } from '../training/Trainer';
 import { DeterminismCheck } from './DeterminismCheck';
 import { useCharacterStore } from './useCharacterStore';
 
-type Tab = 'create' | 'train' | 'battle' | 'events' | 'ranked' | 'library' | 'online';
+type Tab = 'guide' | 'create' | 'train' | 'battle' | 'online' | 'library';
+type BattleSub = 'battle' | EventMode;
+type OnlineSub = RankedView | 'exchange';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'create', label: 'キャラクリエイト' },
+  { id: 'guide', label: 'あそびかた' },
+  { id: 'create', label: 'キャラ作成' },
   { id: 'train', label: 'トレーニング' },
-  { id: 'battle', label: 'バトル' },
-  { id: 'events', label: '種目' },
-  { id: 'ranked', label: 'ランクマッチ' },
-  { id: 'library', label: 'マイキャラ' },
+  { id: 'battle', label: '対戦' },
   { id: 'online', label: 'オンライン' },
+  { id: 'library', label: 'マイキャラ' },
+];
+
+const BATTLE_SUBS: { id: BattleSub; label: string; note: string }[] = [
+  { id: 'battle', label: 'バトル', note: '崩れるステージで1対1' },
+  { id: 'race', label: 'かけっこ', note: 'ゴールまでのタイムを競う' },
+  { id: 'soccer', label: 'サッカー', note: '3対3でボールを押し込む' },
+  { id: 'random', label: 'ランダムマッチ', note: 'オンラインの相手と自動で対戦(レートあり)' },
+];
+
+const ONLINE_SUBS: { id: OnlineSub; label: string; note: string }[] = [
+  { id: 'live', label: 'トーナメント配信', note: '30分ごとの自動トーナメントを観戦' },
+  { id: 'ranking', label: 'ランキング', note: 'レート・勝利数・かけっこの記録' },
+  { id: 'entry', label: '出場登録', note: 'プレイヤー名とトーナメントに出すモンスター' },
+  { id: 'exchange', label: 'キャラ交換', note: 'キャラを公開して、ほかの人のキャラと練習試合' },
 ];
 
 const BOTS = pushOpponents();
@@ -35,6 +53,31 @@ export function App() {
   const store = useCharacterStore();
   const { character, setCharacter } = store;
   const [tab, setTab] = useState<Tab>('create');
+  const [battleSub, setBattleSub] = useState<BattleSub>('battle');
+  const [onlineSub, setOnlineSub] = useState<OnlineSub>('live');
+
+  // 初めて開いたときは「あそびかた」を表示する
+  useEffect(() => {
+    void getSetting<boolean>('seen-guide').then((seen) => {
+      if (!seen) {
+        setTab('guide');
+        void setSetting('seen-guide', true);
+      }
+    });
+  }, []);
+
+  const openBattle = (sub: BattleSub = 'battle') => {
+    setBattleSub(sub);
+    setTab('battle');
+  };
+
+  const go = (target: GuideTarget) => {
+    if (target === 'battle' || target === 'race') openBattle(target);
+    else if (target === 'ranked-entry' || target === 'ranked-live') {
+      setOnlineSub(target === 'ranked-entry' ? 'entry' : 'live');
+      setTab('online');
+    } else setTab(target);
+  };
   /** 体を組み直した回数。トレーニング画面を作り直すのに使う */
   const [bodyVersion, setBodyVersion] = useState(0);
   const [battleReplay, setBattleReplay] = useState<BattleRecord | null>(null);
@@ -45,7 +88,7 @@ export function App() {
   useEffect(() => {
     if (store.ready && store.sharedReplay) {
       setBattleReplay(store.sharedReplay);
-      setTab('battle');
+      openBattle();
     }
   }, [store.ready, store.sharedReplay]);
 
@@ -65,12 +108,14 @@ export function App() {
       if (s.id === store.activeId) continue;
       try {
         const c = parseCharacter(s.json);
-        if (!c.motor || !c.decision) continue;
+        // 運動脳があれば戦える(判断脳がなければ突進する)
+        const data = battleFighter(c);
+        if (!data) continue;
         list.push({
           id: s.id,
           label: c.name,
           kind: s.source === 'mine' ? '保存キャラ' : '受け取ったキャラ',
-          data: { blueprint: c.blueprint, motor: c.motor, decision: c.decision, controller: 'brain' },
+          data,
           passed: c.progress.passed,
         });
       } catch {
@@ -113,7 +158,7 @@ export function App() {
       setTab('train');
     } else {
       setBattleReplay({ ...(data as BattleRecord) });
-      setTab('battle');
+      openBattle();
     }
   };
 
@@ -139,11 +184,33 @@ export function App() {
             </button>
           ))}
         </nav>
-        <span className="current-char" title="編集中のキャラ">
+        <span className="current-char" title="いま育てているキャラ(マイキャラで切り替え)">
           {character.name}
+          <span className="muted small">
+            {' '}
+            ・合格 {character.progress.passed.length}
+          </span>
         </span>
         <DeterminismCheck />
       </header>
+      {tab === 'battle' && (
+        <nav className="subtabs">
+          {BATTLE_SUBS.map((x) => (
+            <button key={x.id} className={battleSub === x.id ? 'selected' : ''} onClick={() => setBattleSub(x.id)} title={x.note}>
+              {x.label}
+            </button>
+          ))}
+        </nav>
+      )}
+      {tab === 'online' && (
+        <nav className="subtabs">
+          {ONLINE_SUBS.map((x) => (
+            <button key={x.id} className={onlineSub === x.id ? 'selected' : ''} onClick={() => setOnlineSub(x.id)} title={x.note}>
+              {x.label}
+            </button>
+          ))}
+        </nav>
+      )}
       {store.received && (
         <div className="banner">
           「{store.received}」を受け取りました。マイキャラの「受け取ったキャラ」から対戦できます。
@@ -158,6 +225,9 @@ export function App() {
         ) : (
           <>
             {/* 画面を切り替えても取り消し履歴や学習が続くよう、各画面は隠すだけにする */}
+            <div className="tab-page scroll" hidden={tab !== 'guide'}>
+              <GuideScene character={character} onGo={go} />
+            </div>
             <div className="tab-page" hidden={tab !== 'create'}>
               <CreateScene key={store.activeId} blueprint={character.blueprint} onChange={setBlueprint} active={tab === 'create'} />
             </div>
@@ -173,21 +243,32 @@ export function App() {
                 replayRequest={trainReplay}
               />
             </div>
-            <div className="tab-page" hidden={tab !== 'battle'}>
+            <div className="tab-page" hidden={tab !== 'battle' || battleSub !== 'battle'}>
               <BattleScene
                 character={character}
                 opponents={battleOpponents}
-                active={tab === 'battle'}
+                active={tab === 'battle' && battleSub === 'battle'}
                 onFinished={onBattleFinished}
                 replay={battleReplay}
                 onAddToPool={addOpponentToPool}
               />
             </div>
-            <div className="tab-page" hidden={tab !== 'events'}>
-              <EventsScene charId={store.activeId} character={character} entries={eventEntries} active={tab === 'events'} />
+            <div className="tab-page" hidden={tab !== 'battle' || battleSub === 'battle'}>
+              <EventsScene
+                charId={store.activeId}
+                character={character}
+                entries={eventEntries}
+                active={tab === 'battle' && battleSub !== 'battle'}
+                mode={battleSub === 'battle' ? 'race' : battleSub}
+              />
             </div>
-            <div className="tab-page" hidden={tab !== 'ranked'}>
-              <RankedScene charId={store.activeId} character={character} active={tab === 'ranked'} />
+            <div className="tab-page" hidden={tab !== 'online' || onlineSub === 'exchange'}>
+              <RankedScene
+                charId={store.activeId}
+                character={character}
+                active={tab === 'online' && onlineSub !== 'exchange'}
+                view={onlineSub === 'exchange' ? 'live' : onlineSub}
+              />
             </div>
             <div className="tab-page scroll" hidden={tab !== 'library'}>
               <LibraryScene
@@ -196,22 +277,22 @@ export function App() {
                 onPlayReplay={playReplay}
                 onBattle={(id) => {
                   setPreferredOpponent(id);
-                  setTab('battle');
+                  openBattle();
                 }}
               />
             </div>
-            <div className="tab-page scroll" hidden={tab !== 'online'}>
+            <div className="tab-page scroll" hidden={tab !== 'online' || onlineSub !== 'exchange'}>
               <OnlineScene
                 charId={store.activeId}
                 character={character}
-                active={tab === 'online'}
+                active={tab === 'online' && onlineSub === 'exchange'}
                 onBattle={async (c) => {
                   // オンラインで見つけた相手は「受け取ったキャラ」として保存して対戦する
                   const id = newId();
                   await saveCharacter(id, { ...c, readOnly: true }, 'received');
                   await store.refresh();
                   setPreferredOpponent(id);
-                  setTab('battle');
+                  openBattle();
                 }}
                 onAddToPool={(c) => void store.addPool(c.name, c)}
               />
