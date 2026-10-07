@@ -13,6 +13,7 @@ import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { TEAM_COLORS } from '../../render/creatureMesh';
 import type { OpponentEntry } from '../battle/BattleScene';
 import { RandomMatchPanel } from './RandomMatchPanel';
+import { BrainToggle } from '../BrainToggle';
 
 interface Props {
   /** いまのキャラの id(ランダムマッチでモンスターの識別子にする) */
@@ -95,7 +96,11 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
       setError(`トレーニング「${TASKS[EVENT_REQUIRED_TASK].label}」に合格したキャラが必要です`);
       return;
     }
-    const ep = new RaceEpisode(R, chosen.map((c) => c.data), randomSeed());
+    const ep = new RaceEpisode(
+      R,
+      chosen.map((c) => c.data),
+      randomSeed(),
+    );
     const names = chosen.map((c) => c.name);
     setRace({ names, result: null, time: 0 });
     viewer.onFrame = (e) => {
@@ -161,13 +166,7 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
         {!ready && <p className="message">トレーニング「2. {TASKS[EVENT_REQUIRED_TASK].label}」に合格すると参加できます</p>}
 
         {mode === 'random' ? (
-          <RandomMatchPanel
-            charId={charId}
-            character={character}
-            eligible={ready}
-            viewer={() => viewerRef.current}
-            rapier={() => rapierRef.current}
-          />
+          <RandomMatchPanel charId={charId} character={character} eligible={ready} viewer={() => viewerRef.current} rapier={() => rapierRef.current} />
         ) : mode === 'race' ? (
           <>
             <p className="muted small">
@@ -197,9 +196,7 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
                       .map(({ n, i }) => (
                         <li key={i}>
                           {n}:
-                          {race.result!.finishAt[i] !== null
-                            ? `ゴール ${race.result!.finishAt[i]!.toFixed(1)}秒`
-                            : `${race.result!.distance[i].toFixed(1)}m`}
+                          {race.result!.finishAt[i] !== null ? `ゴール ${race.result!.finishAt[i]!.toFixed(1)}秒` : `${race.result!.distance[i].toFixed(1)}m`}
                         </li>
                       ))}
                 </ol>
@@ -209,7 +206,8 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
         ) : (
           <>
             <p className="muted small">
-              {SOCCER.teamSize}対{SOCCER.teamSize}。各キャラは自分の運動脳で動き、チームの作戦(ボールの後ろに回り込んで押す・守る・支える)で動きます。{SOCCER.timeLimit}秒で得点の多いチームの勝ち。
+              {SOCCER.teamSize}対{SOCCER.teamSize}。各キャラは自分の運動脳で動き、チームの作戦(ボールの後ろに回り込んで押す・守る・支える)で動きます。
+              {SOCCER.timeLimit}秒で得点の多いチームの勝ち。
             </p>
             <h3 style={{ color: hex(TEAM_COLORS[0]) }}>チームA(青)</h3>
             <div className="vs">
@@ -233,7 +231,9 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
               </button>
             </div>
             {soccer && (
-              <div className={`result ${soccer.time >= SOCCER.timeLimit - 1e-9 ? (soccer.result.winner === 0 ? 'win' : soccer.result.winner === 1 ? 'lose' : 'draw') : ''}`}>
+              <div
+                className={`result ${soccer.time >= SOCCER.timeLimit - 1e-9 ? (soccer.result.winner === 0 ? 'win' : soccer.result.winner === 1 ? 'lose' : 'draw') : ''}`}
+              >
                 <div className="result-title">
                   {soccer.result.score[0]} - {soccer.result.score[1]}
                 </div>
@@ -253,6 +253,7 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
       <div className="viewport">
         <canvas ref={canvasRef} />
         <div className="speed">
+          {mode === 'random' && <BrainToggle viewer={() => viewerRef.current} />}
           {([1, 4] as const).map((s) => (
             <button key={s} className={speed === s ? 'selected' : ''} onClick={() => setSpeed(s)}>
               {s}倍

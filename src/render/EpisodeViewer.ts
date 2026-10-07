@@ -6,6 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MOVE_TASK, PHYSICS } from '../core/config';
 import type { Episode } from '../core/training/episode';
 import { buildCreatureMesh, syncCreatureMesh, type CreatureMesh } from './creatureMesh';
+import { BrainOverlay } from './BrainOverlay';
 import { StageMesh } from './StageMesh';
 import { guardContext, type ContextGuard } from './webglContext';
 
@@ -49,6 +50,9 @@ export class EpisodeViewer {
   onFrame: ((episode: Episode) => void) | null = null;
   /** 終了後、次へ進むまでの待ち時間 [s] */
   endPause = 1.0;
+  /** 「AIの考え」(判断脳が見ているタイルと、進みたい向き)を重ねて表示するか */
+  showBrain = false;
+  private brainOverlay = new BrainOverlay();
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -100,6 +104,7 @@ export class EpisodeViewer {
 
     this.trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x56ccf2 }));
     this.scene.add(this.trail);
+    this.scene.add(this.brainOverlay.root);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas);
@@ -190,6 +195,7 @@ export class EpisodeViewer {
         (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
       }
     });
+    this.brainOverlay.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.context.release();
@@ -283,6 +289,7 @@ export class EpisodeViewer {
       }
       if (this.main) {
         this.sync();
+        this.brainOverlay.update(this.showBrain ? this.main.episode : null);
         this.onFrame?.(this.main.episode);
         if (this.follow && this.main.episode.fighters.length === 1 && !this.main.episode.fighters[0].out) {
           const p = this.main.episode.fighters[0].position();

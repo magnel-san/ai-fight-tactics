@@ -10,6 +10,7 @@ import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { downloadReplay, replayShareUrl } from '../../storage/share';
 import { deleteReplay, listReplays, type StoredReplay } from '../../storage/db';
 import { TEAM_COLORS } from '../../render/creatureMesh';
+import { BrainToggle } from '../BrainToggle';
 
 export interface OpponentEntry {
   id: string;
@@ -203,7 +204,9 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
         </div>
         {!ready && <p className="message">トレーニングの「1. 目標地点への移動」に合格すると戦えます</p>}
         {ready && !character.decision && (
-          <p className="muted small">判断脳をまだ鍛えていないので、相手に向かって突進します。「危険なタイルを避ける」以降のトレーニングで判断脳を鍛えると、作戦を考えて戦います</p>
+          <p className="muted small">
+            判断脳をまだ鍛えていないので、相手に向かって突進します。「危険なタイルを避ける」以降のトレーニングで判断脳を鍛えると、作戦を考えて戦います
+          </p>
         )}
         {opponents.length === 0 && <p className="message">対戦相手がいません</p>}
         <div className="row">
@@ -311,6 +314,7 @@ export function BattleScene({ character, opponents, active, onFinished, replay, 
           </div>
         )}
         <div className="speed">
+          <BrainToggle viewer={() => viewerRef.current} />
           {([1, 4] as Speed[]).map((s) => (
             <button key={s} className={speed === s ? 'selected' : ''} onClick={() => setSpeed(s)}>
               {s}倍

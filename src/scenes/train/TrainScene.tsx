@@ -21,6 +21,7 @@ import { FitnessChart } from './FitnessChart';
 import { battleFighter } from '../../core/character';
 import { measureReportInWorker } from '../../training/reportClient';
 import { ReportCardView } from './ReportCardView';
+import { BrainToggle } from '../BrainToggle';
 
 /** トレーニングのエピソードのリプレイ(マイルストーンの場面など) */
 export interface TrainReplay {
@@ -580,6 +581,7 @@ export function TrainScene({ charId, character, onChange, opponents, rivals, act
         <canvas ref={canvasRef} />
         <div className="hud">{replayLabel || '運動脳を鍛えると、ここに動きが表示されます'}</div>
         <div className="speed">
+          <BrainToggle viewer={() => viewerRef.current} />
           <label className="ghost-toggle">
             <input type="checkbox" checked={showGhosts} onChange={(e) => setShowGhosts(e.target.checked)} />
             ゴースト

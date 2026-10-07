@@ -24,6 +24,7 @@ import { TEAM_COLORS } from '../../render/creatureMesh';
 import { EpisodeViewer } from '../../render/EpisodeViewer';
 import { getSetting, saveReplay, setSetting } from '../../storage/db';
 import type { BattleRecord } from '../battle/BattleScene';
+import { BrainToggle } from '../BrainToggle';
 
 interface Props {
   /** いまのキャラの id(モンスターの識別子にする) */
@@ -42,6 +43,9 @@ interface LiveMatch {
   outcome: RankedOutcome | null;
   /** どちらかのデータが壊れていて試合にならなかった(結果は報告しない) */
   forfeit: boolean;
+  /** 前の試合から勝ち上がる場合、その試合の番号 */
+  fromA: number | null;
+  fromB: number | null;
 }
 
 interface LiveTournament {
@@ -77,6 +81,8 @@ async function resolveTournament(t: number, versions: readonly EntryVersion[], o
     b: m.b !== null ? entrants[m.b] : null,
     outcome: null,
     forfeit: false,
+    fromA: m.fromA,
+    fromB: m.fromB,
   }));
   const lt: LiveTournament = { t, entrants, matches };
   onProgress?.(lt);
@@ -520,6 +526,8 @@ export function RankedScene({ charId, character, active, view }: Props) {
   const bracketView = (lt: LiveTournament, highlight: number | null, replayable: boolean) => {
     const rounds = lt.matches.length ? lt.matches[lt.matches.length - 1].round + 1 : 0;
     const shown = (m: LiveMatch) => matchSlotStart(lt.t, m.index) + introMs + (m.outcome?.time ?? BATTLE.timeLimit) * 1000 <= now;
+    // 勝ち上がりの元の試合がまだ配信で終わっていなければ、勝者の名前を出さない(先の試合の結果が分かってしまうため)
+    const side = (e: EntryVersion | null, from: number | null) => (from !== null && !shown(lt.matches[from]) ? `第${from + 1}試合の勝者` : label(e));
     return (
       <ol className="bracket">
         {lt.matches.map((m) => (
@@ -532,8 +540,8 @@ export function RankedScene({ charId, character, active, view }: Props) {
               })}
             </span>
             <span>
-              <b className={m.outcome && shown(m) && m.outcome.advance === 0 ? 'winner' : ''}>{label(m.a)}</b> vs{' '}
-              <b className={m.outcome && shown(m) && m.outcome.advance === 1 ? 'winner' : ''}>{label(m.b)}</b>
+              <b className={m.outcome && shown(m) && m.outcome.advance === 0 ? 'winner' : ''}>{side(m.a, m.fromA)}</b> vs{' '}
+              <b className={m.outcome && shown(m) && m.outcome.advance === 1 ? 'winner' : ''}>{side(m.b, m.fromB)}</b>
             </span>
             {m.outcome && shown(m) && (
               <span className="muted small">
@@ -707,7 +715,9 @@ export function RankedScene({ charId, character, active, view }: Props) {
             {!myName && <p className="message">先にプレイヤー名を登録してください</p>}
             {!ready && <p className="message">トレーニング「2. 対象を追う」に合格したキャラだけ登録できます</p>}
             {ready && !character.decision && (
-              <p className="muted small">判断脳をまだ鍛えていないので、バトルでは相手に向かって突進します(トレーニング「危険なタイルを避ける」以降で判断脳を鍛えると、作戦を考えて戦います)</p>
+              <p className="muted small">
+                判断脳をまだ鍛えていないので、バトルでは相手に向かって突進します(トレーニング「危険なタイルを避ける」以降で判断脳を鍛えると、作戦を考えて戦います)
+              </p>
             )}
             <p className="muted small">
               {RANKED.interval / 60}
@@ -775,14 +785,19 @@ export function RankedScene({ charId, character, active, view }: Props) {
       </aside>
       <div className="viewport">
         <canvas ref={canvasRef} />
-        {replay && view !== 'ranking' && (
+        {view !== 'ranking' && (
           <div className="speed">
-            {([1, 4] as const).map((x) => (
-              <button key={x} className={replaySpeed === x ? 'selected' : ''} onClick={() => setReplaySpeed(x)}>
-                {x}倍
-              </button>
-            ))}
-            <button onClick={backToLive}>ライブに戻る</button>
+            <BrainToggle viewer={() => viewerRef.current} />
+            {replay && (
+              <>
+                {([1, 4] as const).map((x) => (
+                  <button key={x} className={replaySpeed === x ? 'selected' : ''} onClick={() => setReplaySpeed(x)}>
+                    {x}倍
+                  </button>
+                ))}
+                <button onClick={backToLive}>ライブに戻る</button>
+              </>
+            )}
           </div>
         )}
         {view === 'ranking' ? (
