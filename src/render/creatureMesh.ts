@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import type { BlockType } from '../core/config';
 import { CREATURE } from '../core/config';
 import { pistonStates, type Creature } from '../core/creature/assemble';
-import { FACE_DIR, pistonDirection, shapeOf } from '../core/creature/blueprint';
-import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh, windArrow, windArrowGeometry } from './blockShapes';
+import { FACE_DIR, pistonDirection } from '../core/creature/blueprint';
+import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh, TIRE_COLOR, windArrow, windArrowGeometry } from './blockShapes';
 
 export const BLOCK_COLORS: Record<BlockType, number> = {
   core: 0xf2c94c,
@@ -49,6 +49,13 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
   // 形ごとの形状(当たり判定と同じ大きさ・向き)
   const geometries = new BlockGeometries(size);
   const grip = gripMaterial({ ghost: opts.ghost });
+  const tireMaterial = new THREE.MeshStandardMaterial({
+    color: TIRE_COLOR,
+    roughness: 0.9,
+    transparent: opts.ghost ?? false,
+    opacity: opts.ghost ? 0.22 : 1,
+    depthWrite: !opts.ghost,
+  });
   // 風の吹く向きの矢印
   const arrowGeometry = windArrowGeometry(size);
   const arrowMaterial = new THREE.MeshStandardMaterial({ color: 0xe0f7fa, transparent: true, opacity: opts.ghost ? 0.15 : 0.8 });
@@ -80,8 +87,10 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
 
   const rodByBlock = new Map<number, CreatureMesh['rods'][number]>();
   creature.blueprint.blocks.forEach((b, i) => {
-    const geometry = geometries.get(shapeOf(b));
-    const mesh = new THREE.Mesh(geometry, material(b.type));
+    const geometry = geometries.of(b);
+    const mesh = new THREE.Mesh(geometry, b.tire ? tireMaterial : material(b.type));
+    // タイヤは黒いタイヤに、関節の色のホイールを付ける
+    if (b.tire) mesh.add(new THREE.Mesh(geometries.hubGeometry(), material(b.type)));
     mesh.position.set(...creature.localOffsets[i]);
     orientBlockMesh(mesh, b);
     if (b.grip) mesh.add(gripOverlay(geometry, grip));
@@ -126,6 +135,7 @@ export function buildCreatureMesh(creature: Creature, opts: CreatureMeshOptions 
     dispose() {
       geometries.dispose();
       grip.dispose();
+      tireMaterial.dispose();
       arrowGeometry.dispose();
       arrowMaterial.dispose();
       rodGeometry.dispose();

@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh, windArrow, windArrowGeometry } from '../../render/blockShapes';
+import { BlockGeometries, gripMaterial, gripOverlay, orientBlockMesh, TIRE_COLOR, windArrow, windArrowGeometry } from '../../render/blockShapes';
 import { CREATURE, type BlockType } from '../../core/config';
 import {
   AXIS_DIR,
@@ -13,7 +13,6 @@ import {
   centerOfMass,
   FACE_DIR,
   pistonDirection,
-  shapeOf,
   type BlockSpec,
   type Blueprint,
   type Face,
@@ -77,6 +76,7 @@ export class EditorView {
   /** 見た目の形 */
   private shapes = new BlockGeometries(SIZE * 0.98);
   private gripMat = gripMaterial();
+  private tireMaterial = new THREE.MeshStandardMaterial({ color: TIRE_COLOR, roughness: 0.9 });
   private arrowGeometry = windArrowGeometry(SIZE);
   private arrowMaterial = new THREE.MeshStandardMaterial({ color: 0xe0f7fa, transparent: true, opacity: 0.85 });
   private axisGeometry = new THREE.CylinderGeometry(0.025, 0.025, SIZE * 1.3, 8);
@@ -290,6 +290,7 @@ export class EditorView {
     for (const m of this.materials.values()) m.dispose();
     this.shapes.dispose();
     this.gripMat.dispose();
+    this.tireMaterial.dispose();
     this.arrowGeometry.dispose();
     this.arrowMaterial.dispose();
     this.pickMaterial.dispose();
@@ -309,10 +310,16 @@ export class EditorView {
 
   /** ブロックの見た目(形・色・摩擦オンの網目)。当たり判定はしない */
   private shapeMesh(b: BlockSpec): THREE.Mesh {
-    const geometry = this.shapes.get(shapeOf(b));
-    const mesh = new THREE.Mesh(geometry, this.material(b.type));
+    const geometry = this.shapes.of(b);
+    const mesh = new THREE.Mesh(geometry, b.tire ? this.tireMaterial : this.material(b.type));
     orientBlockMesh(mesh, b);
     mesh.raycast = () => {};
+    if (b.tire) {
+      // 黒いタイヤに、関節の色のホイールを付ける
+      const hub = new THREE.Mesh(this.shapes.hubGeometry(), this.material(b.type));
+      hub.raycast = () => {};
+      mesh.add(hub);
+    }
     if (b.grip) {
       const g = gripOverlay(geometry, this.gripMat);
       g.raycast = () => {};
@@ -438,7 +445,7 @@ export class EditorView {
         depthWrite: false,
       });
       const spec = placement.blocks?.[placement.cells.indexOf(cell)];
-      const ghost = new THREE.Mesh(spec ? this.shapes.get(shapeOf(spec)) : this.blockGeometry, material);
+      const ghost = new THREE.Mesh(spec ? this.shapes.of(spec) : this.blockGeometry, material);
       ghost.position.set(cell[0] * SIZE, cell[1] * SIZE, cell[2] * SIZE);
       if (spec) orientBlockMesh(ghost, spec);
       ghost.raycast = () => {};

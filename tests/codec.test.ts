@@ -32,7 +32,7 @@ describe('キャラのJSON', () => {
   it('キャラの往復で、体・脳・育成状況が一致する', () => {
     const c = sample();
     const json = characterToJson(c);
-    expect(json.version).toBe(5);
+    expect(json.version).toBe(6);
     expect(json.brains.motor!.inputs).toBe(26);
     expect(json.brains.motor!.outputs).toBe(4);
     expect(json.brains.decision!.inputs).toBe(77);
@@ -66,7 +66,8 @@ describe('キャラのJSON', () => {
     // 関節が上限を超える体
     expect(
       bad((j) => {
-        for (let i = 0; i < 9; i++) j.blueprint.blocks.push({ id: j.blueprint.blocks.length, type: 'joint', parent: j.blueprint.blocks.length - 1, face: '+y', axis: 'x' });
+        for (let i = 0; i < 9; i++)
+          j.blueprint.blocks.push({ id: j.blueprint.blocks.length, type: 'joint', parent: j.blueprint.blocks.length - 1, face: '+y', axis: 'x' });
       }),
     ).toThrow();
     expect(() => parseCharacter('not json')).toThrow();
@@ -161,7 +162,7 @@ describe('形式の移行', () => {
       expect([...b.subarray(0, 3)]).toEqual([...a]);
       expect(b[3]).toBe(0);
     }
-    expect(characterToJson(c).version).toBe(5);
+    expect(characterToJson(c).version).toBe(6);
   });
 });
 
@@ -228,5 +229,27 @@ describe('形式4:形・摩擦オン・グリップの置き換え', () => {
         progress: { passed: [], generations: {} },
       }),
     ).toThrow();
+  });
+});
+
+describe('形式6:円柱の向きとタイヤモード', () => {
+  it('円柱の向きとタイヤは保存して読み直しても同じ。形式5のデータもそのまま読める', () => {
+    const c = parseCharacter({
+      version: 5,
+      name: 'wheel',
+      blueprint: {
+        blocks: [
+          { id: 0, type: 'core', parent: null },
+          { id: 1, type: 'joint', parent: 0, face: '-y', axis: 'x', shape: 'cylinder', tire: true },
+          { id: 2, type: 'base', parent: 0, face: '+z', shape: 'cylinder', cylAxis: 'y' },
+        ],
+      },
+      brains: { motor: null, decision: null },
+      progress: { passed: [], generations: {} },
+    });
+    expect(c.blueprint.blocks[1].tire).toBe(true);
+    expect(c.blueprint.blocks[2].cylAxis).toBe('y');
+    const again = parseCharacter(JSON.parse(JSON.stringify(characterToJson(c))));
+    expect(again.blueprint).toEqual(c.blueprint);
   });
 });

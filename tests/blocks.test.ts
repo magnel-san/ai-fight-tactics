@@ -154,3 +154,47 @@ describe('雲・風・弾力', () => {
     world.free();
   });
 });
+
+describe('円柱の向きとタイヤモード', () => {
+  const wheelBody = (look: Partial<BlockSpec>): Blueprint => ({
+    blocks: [core, { id: 1, type: 'joint', parent: 0, face: '-y', axis: 'x', shape: 'cylinder', ...look }],
+  });
+
+  it('円柱の向きを指定すると、自動の向きより優先される', () => {
+    const b: BlockSpec = { id: 1, type: 'base', parent: 0, face: '+x', shape: 'cylinder' };
+    expect(cylinderAxis(b)).toBe('x');
+    expect(cylinderAxis({ ...b, cylAxis: 'y' })).toBe('y');
+    expect(validate({ blocks: [core, { ...b, cylAxis: 'z' }] })).toEqual([]);
+    // 円柱でないブロックには向きを付けられない
+    expect(validate({ blocks: [core, { id: 1, type: 'base', parent: 0, face: '+x', cylAxis: 'z' }] }).length).toBeGreaterThan(0);
+  });
+
+  it('タイヤモードは円柱の関節だけで、コストが増える', () => {
+    expect(validate(wheelBody({ tire: true }))).toEqual([]);
+    expect(blockCost({ id: 1, type: 'joint', parent: 0, face: '-y', axis: 'x', shape: 'cylinder', tire: true })).toBe(
+      BLOCKS.joint.cost + BLOCK_OPTIONS.tireCost,
+    );
+    expect(validate({ blocks: [core, { id: 1, type: 'joint', parent: 0, face: '-y', axis: 'x', tire: true }] }).length).toBeGreaterThan(0);
+    expect(validate({ blocks: [core, { id: 1, type: 'base', parent: 0, face: '-y', shape: 'cylinder', tire: true }] }).length).toBeGreaterThan(0);
+  });
+
+  it('タイヤの周り(回転軸に垂直な4方向)に親以外のブロックがあると重なるので置けない', () => {
+    // 軸 x のタイヤ(コアの下)。タイヤの前(+z)にブロックを付けると、タイヤの円と重なる
+    const bp = wheelBody({ tire: true });
+    expect(addBlock(bp, 1, '+z', 'base').ok).toBe(false);
+    // 軸の向き(+x)なら重ならない
+    expect(addBlock(bp, 1, '+x', 'base').ok).toBe(true);
+    // すでに隣にブロックがあるとタイヤにできない
+    const withNeighbor: Blueprint = {
+      blocks: [...wheelBody({}).blocks, { id: 2, type: 'base', parent: 1, face: '+z' }],
+    };
+    expect(setBlockLook(withNeighbor, 1, { tire: true }).ok).toBe(false);
+  });
+
+  it('タイヤは半径が大きいので、同じ体でも高く立つ', () => {
+    const normal = simulate(wheelBody({}), 120, 0.8);
+    const tire = simulate(wheelBody({ tire: true }), 120, 0.8);
+    expect(tire.y - normal.y).toBeGreaterThan(0.07);
+    expect(tire.y - normal.y).toBeLessThan(0.13);
+  });
+});

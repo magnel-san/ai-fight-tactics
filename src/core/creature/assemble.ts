@@ -7,7 +7,19 @@ import { BLOCK_OPTIONS, BLOCKS, BOUNCY_SPRING, BRAIN, CREATURE, PHYSICS, WIND_BL
 import { atan2, cos, sin } from '../math/fmath';
 import { rotate } from '../math/quat';
 import type { Rapier } from '../physics/rapier';
-import { AXIS_DIR, blockPositions, cylinderAxis, FACE_DIR, pistonDirection, segmentsOf, shapeOf, validate, type Axis, type Blueprint } from './blueprint';
+import {
+  AXIS_DIR,
+  blockPositions,
+  cylinderAxis,
+  cylinderRadius,
+  FACE_DIR,
+  pistonDirection,
+  segmentsOf,
+  shapeOf,
+  validate,
+  type Axis,
+  type Blueprint,
+} from './blueprint';
 
 export interface SpawnPose {
   /** コア中心のワールド座標 [m] */
@@ -81,7 +93,7 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
       shape === 'sphere'
         ? R.ColliderDesc.ball(half)
         : shape === 'cylinder'
-          ? R.ColliderDesc.roundCylinder(half - r, half - r, r).setRotation(CYLINDER_ROTATION[cylinderAxis(b)])
+          ? R.ColliderDesc.roundCylinder(half - r, cylinderRadius(b) - CREATURE.colliderShrink - r, r).setRotation(CYLINDER_ROTATION[cylinderAxis(b)])
           : R.ColliderDesc.roundCuboid(half - r, half - r, half - r, r);
     desc
       .setTranslation(offset[0], offset[1], offset[2])

@@ -17,8 +17,9 @@ import { TASK_ORDER, type TaskName } from './training/tasks';
  *   3:ピストンブロックを追加。運動脳の入力にジャンプ指令、判断脳の出力にジャンプ指令を追加
  *   4:ブロックに形(shape)と摩擦オン(grip)を追加。グリップブロックを「基礎 + 摩擦オン」に置き換え、雲・浮力ブロックを追加
  *   5:浮力ブロックを風ブロックに置き換え(下向きに吹く風にする)
+ *   6:円柱の軸の向き(cylAxis)と、関節のタイヤモード(tire)を追加(古いデータはそのまま読める)
  */
-export const FORMAT_VERSION = 5;
+export const FORMAT_VERSION = 6;
 
 interface BrainJson {
   inputs: number;
@@ -114,6 +115,8 @@ function migrate(input: { version?: unknown }): CharacterJson {
   if (json.version === 2) json = migrate2to3(json);
   if (json.version === 3) json = migrate3to4(json);
   if (json.version === 4) json = migrate4to5(json);
+  // 5 → 6:項目を足しただけなので、中身は変えない
+  if (json.version === 5) json = { ...json, version: 6 };
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
 }
@@ -225,6 +228,14 @@ function parseBlueprint(v: unknown): Blueprint {
     if (o.grip !== undefined && o.grip !== false) {
       if (o.grip !== true) throw new Error(`ブロック${i}の摩擦の設定が不正です`);
       spec.grip = true;
+    }
+    if (o.cylAxis !== undefined) {
+      if (!AXES.has(o.cylAxis as string)) throw new Error(`ブロック${i}の円柱の向きが不正です`);
+      spec.cylAxis = o.cylAxis as BlockSpec['cylAxis'];
+    }
+    if (o.tire !== undefined && o.tire !== false) {
+      if (o.tire !== true) throw new Error(`ブロック${i}のタイヤの設定が不正です`);
+      spec.tire = true;
     }
     return spec;
   });

@@ -38,6 +38,10 @@ function finish(bp: Blueprint, notes: string[] = []): EditResult {
 export interface BlockLook {
   shape?: BlockShape;
   grip?: boolean;
+  /** 円柱の軸の向き(null は自動) */
+  cylAxis?: Axis | null;
+  /** タイヤモード(円柱にした関節だけ) */
+  tire?: boolean;
 }
 
 /** 形と摩擦を設定したブロック(既定の値のときは持たない) */
@@ -51,6 +55,20 @@ function withLook(b: BlockSpec, look: BlockLook | undefined): BlockSpec {
     if (look.grip) next.grip = true;
     else delete next.grip;
   }
+  if (look?.cylAxis !== undefined) {
+    if (look.cylAxis === null) delete next.cylAxis;
+    else next.cylAxis = look.cylAxis;
+  }
+  if (look?.tire !== undefined) {
+    if (look.tire) next.tire = true;
+    else delete next.tire;
+  }
+  // 円柱の向きとタイヤは円柱のときだけ、タイヤは関節のときだけ持つ
+  if (next.shape !== 'cylinder') {
+    delete next.cylAxis;
+    delete next.tire;
+  }
+  if (next.type !== 'joint') delete next.tire;
   return next;
 }
 

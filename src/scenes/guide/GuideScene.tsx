@@ -139,6 +139,11 @@ export function GuideScene({ character, onGo }: Props) {
           どのブロックも、形を {SHAPE_LABELS.map((x) => x.label).join('・')} から選べます({SHAPE_LABELS.map((x) => `${x.label}:${x.note}`).join(' / ')})。
           「摩擦オン」にすると滑りにくく踏ん張れるようになります(コスト+{BLOCK_OPTIONS.gripCost}。緑の網目が目印)。
         </p>
+        <p className="muted small">
+          円柱にしたブロックは、円柱の向き(自動・左右・上下・前後)を選べます。関節を円柱にして「タイヤモード」をオンにすると、半径が
+          {BLOCK_OPTIONS.tireRadiusScale}倍の黒いタイヤになります(コスト+{BLOCK_OPTIONS.tireCost})。関節の回転軸と円柱の向きをそろえると転がって進めます。
+          タイヤの周り(回転軸に垂直な4方向)には、重ならないように親以外のブロックを置けません。
+        </p>
       </section>
 
       <section className="card">

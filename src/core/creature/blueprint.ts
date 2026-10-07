@@ -21,6 +21,10 @@ export interface BlockSpec {
   shape?: BlockShape;
   /** 摩擦オン(省略時はオフ)。摩擦が大きく踏ん張れる。コストが増える */
   grip?: boolean;
+  /** 円柱の軸の向き(円柱のみ。省略時は自動:cylinderAxis) */
+  cylAxis?: Axis;
+  /** タイヤモード(円柱にした関節のみ)。半径が大きくなる。コストが増える */
+  tire?: boolean;
 }
 
 export const SHAPES: readonly BlockShape[] = ['cube', 'sphere', 'cylinder'];
@@ -30,19 +34,26 @@ export function shapeOf(b: BlockSpec): BlockShape {
   return b.shape ?? 'cube';
 }
 
-/** 1つのブロックのコスト(摩擦オンなら追加のコスト) */
+/** 1つのブロックのコスト(摩擦オン・タイヤモードなら追加のコスト) */
 export function blockCost(b: BlockSpec): number {
-  return BLOCKS[b.type].cost + (b.grip ? BLOCK_OPTIONS.gripCost : 0);
+  return BLOCKS[b.type].cost + (b.grip ? BLOCK_OPTIONS.gripCost : 0) + (b.tire ? BLOCK_OPTIONS.tireCost : 0);
 }
 
-/**
- * 円柱の軸の向き。関節は回転軸(車輪になる)、ピストンは伸びる向き、
- * ほかのブロックは付けた面の向き(コアは上下)
- */
-export function cylinderAxis(b: BlockSpec): Axis {
+/** 円柱の半径 [m](タイヤモードなら大きい) */
+export function cylinderRadius(b: BlockSpec): number {
+  return (CREATURE.blockSize / 2) * (b.tire ? BLOCK_OPTIONS.tireRadiusScale : 1);
+}
+
+/** 円柱の軸の向きを指定しなかったときの向き(自動)。関節は回転軸(車輪になる)、ピストン・風は向き、ほかは付けた面の向き(コアは上下) */
+export function autoCylinderAxis(b: BlockSpec): Axis {
   if (b.type === 'joint' && b.axis) return b.axis;
   const f = hasDirection(b.type) && b.face ? pistonDirection(b) : b.face;
   return f ? (f[1] as Axis) : 'y';
+}
+
+/** 円柱の軸の向き(指定があればそれ、なければ自動) */
+export function cylinderAxis(b: BlockSpec): Axis {
+  return b.cylAxis ?? autoCylinderAxis(b);
 }
 
 export interface Blueprint {
@@ -192,6 +203,10 @@ export function validate(bp: Blueprint): string[] {
     }
     if (b.shape !== undefined && !SHAPES.includes(b.shape)) errors.push(`ブロック${i}の形が不正です:${b.shape}`);
     if (b.grip !== undefined && typeof b.grip !== 'boolean') errors.push(`ブロック${i}の摩擦の設定が不正です`);
+    if (b.cylAxis !== undefined && (shapeOf(b) !== 'cylinder' || !(b.cylAxis in AXIS_DIR))) errors.push(`ブロック${i}の円柱の向きが不正です`);
+    if (b.tire !== undefined && (b.tire !== true || b.type !== 'joint' || shapeOf(b) !== 'cylinder')) {
+      errors.push(`タイヤモードは、円柱にした関節ブロックだけに使えます(ブロック${i})`);
+    }
   });
 
   if (structureOk) {
@@ -201,6 +216,19 @@ export function validate(bp: Blueprint): string[] {
       const other = seen.get(key);
       if (other !== undefined) errors.push(`ブロック${i}がブロック${other}と同じ位置に重なっています`);
       else seen.set(key, i);
+    });
+    // タイヤは半径が大きいので、回転軸に垂直な4方向の隣のマスに、親以外のブロックがあると重なる
+    const pos = blockPositions(bp);
+    blocks.forEach((b, i) => {
+      if (!b.tire) return;
+      const axis = cylinderAxis(b);
+      for (const f of FACES) {
+        if (f[1] === axis) continue;
+        const d = FACE_DIR[f];
+        const other = seen.get([pos[i][0] + d[0], pos[i][1] + d[1], pos[i][2] + d[2]].join(','));
+        if (other !== undefined && other !== b.parent)
+          errors.push(`タイヤ(ブロック${i})がブロック${other}と重なります。タイヤの周り(回転軸に垂直な4方向)には親以外のブロックを置けません`);
+      }
     });
   }
 

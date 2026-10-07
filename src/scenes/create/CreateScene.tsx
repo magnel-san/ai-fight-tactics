@@ -44,6 +44,14 @@ export const PALETTE: { type: Exclude<BlockType, 'core'>; label: string; note: s
   { type: 'sensor', label: 'センサー', note: 'トレーニング中に地面に触れると減点(倒れにくい動きを学ばせる。バトルでは普通のブロック)' },
 ];
 
+/** 円柱の軸の向き('auto' は自動:関節は回転軸、ピストン・風は向き、ほかは付けた面の向き) */
+const CYL_AXES: { axis: Axis | 'auto'; label: string }[] = [
+  { axis: 'auto', label: '自動' },
+  { axis: 'x', label: '左右' },
+  { axis: 'y', label: '上下' },
+  { axis: 'z', label: '前後' },
+];
+
 export const SHAPE_LABELS: { shape: BlockShape; label: string; note: string }[] = [
   { shape: 'cube', label: '立方体', note: '安定して置ける' },
   { shape: 'sphere', label: '球', note: '転がりやすく、引っかかりにくい' },
@@ -68,6 +76,10 @@ const PISTON_DIRS: { dir: Face | 'face'; label: string; note: string }[] = [
   { dir: '+x', label: '左', note: '左に伸びる' },
   { dir: '-x', label: '右', note: '右に伸びる' },
 ];
+
+const CYL_AXIS_NOTE = '円柱の軸の向き。自動:関節は回転軸(車輪になる)、ピストン・風は向き、ほかは付けた面の向き';
+const TIRE_NOTE =
+  '円柱にした関節の半径を大きくして、タイヤにする。回転軸に垂直な4方向の隣には、親以外のブロックを置けない(重ならないように)。回転軸と円柱の向きをそろえると転がる';
 
 const dirLabel = (f: Face) => PISTON_DIRS.find((d) => d.dir === f)?.label ?? f;
 
@@ -94,6 +106,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   /** 置くブロックの形と摩擦 */
   const [shape, setShape] = useState<BlockShape>('cube');
   const [grip, setGrip] = useState(false);
+  /** 置く円柱の軸の向きと、タイヤモード(円柱の関節だけ) */
+  const [cylAxis, setCylAxis] = useState<Axis | 'auto'>('auto');
+  const [tire, setTire] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
   /** 右クリックで選んだブロック */
   const [selected, setSelected] = useState<number | null>(null);
@@ -103,8 +118,10 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   const [, forceRender] = useState(0);
 
   // イベントハンドラから常に最新の値を読むための参照
-  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir, shape, grip });
-  latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir, shape, grip };
+  /** 置くブロックの見た目(形・摩擦・円柱の向き・タイヤ) */
+  const look = { shape, grip, cylAxis: cylAxis === 'auto' ? null : cylAxis, tire: shape === 'cylinder' && type === 'joint' && tire };
+  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir, look });
+  latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir, look };
 
   const commit = useCallback(
     (result: EditResult) => {
@@ -143,9 +160,8 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => {
     const view = new EditorView(canvasRef.current!, {
       getPlacement(parent, face) {
-        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd, shape: sh, grip: g } = latest.current;
+        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd, look } = latest.current;
         const dir = pd === 'face' ? undefined : pd;
-        const look = { shape: sh, grip: g };
         const result = sym ? addBlockSymmetric(bp, parent, face, t, a, dir, look) : addBlock(bp, parent, face, t, a, dir, look);
         const target = cellOnFace(bp, parent, face);
         if (!result.ok) return { cells: [target], ok: false };
@@ -154,9 +170,8 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         return { cells: pos.slice(bp.blocks.length), blocks: result.blueprint.blocks.slice(bp.blocks.length), ok: true };
       },
       onPlace(parent, face) {
-        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd, shape: sh, grip: g } = latest.current;
+        const { blueprint: bp, type: t, axis: a, symmetric: sym, pistonDir: pd, look } = latest.current;
         const dir = pd === 'face' ? undefined : pd;
-        const look = { shape: sh, grip: g };
         commit(sym ? addBlockSymmetric(bp, parent, face, t, a, dir, look) : addBlock(bp, parent, face, t, a, dir, look));
       },
       onHover: setHovered,
@@ -175,7 +190,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => setSelected(null), [blueprint.blocks.length]);
   useEffect(() => viewRef.current?.setSymmetric(symmetric), [symmetric]);
   useEffect(() => viewRef.current?.setGhostType(type), [type]);
-  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric, pistonDir, shape, grip]);
+  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric, pistonDir, shape, grip, cylAxis, tire, type]);
 
   // キーボード操作
   useEffect(() => {
@@ -248,6 +263,24 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
             </button>
           ))}
         </div>
+        {shape === 'cylinder' && (
+          <>
+            <h3>円柱の向き</h3>
+            <div className="segmented">
+              {CYL_AXES.map((x) => (
+                <button key={x.axis} className={cylAxis === x.axis ? 'selected' : ''} onClick={() => setCylAxis(x.axis)} title={CYL_AXIS_NOTE}>
+                  {x.label}
+                </button>
+              ))}
+            </div>
+            {type === 'joint' && (
+              <label className="toggle" title={TIRE_NOTE}>
+                <input type="checkbox" checked={tire} onChange={(e) => setTire(e.target.checked)} />
+                タイヤモード(半径{BLOCK_OPTIONS.tireRadiusScale}倍・コスト+{BLOCK_OPTIONS.tireCost})
+              </label>
+            )}
+          </>
+        )}
         <label className="toggle" title={`摩擦が大きく、踏ん張れる・滑りにくい(コスト+${BLOCK_OPTIONS.gripCost})`}>
           <input type="checkbox" checked={grip} onChange={(e) => setGrip(e.target.checked)} />
           摩擦オン(コスト+{BLOCK_OPTIONS.gripCost})
@@ -329,6 +362,41 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
                 </button>
               ))}
             </div>
+            {shapeOf(selectedBlock) === 'cylinder' && (
+              <>
+                <div className="segmented">
+                  {CYL_AXES.map((x) => {
+                    const lookOf = { cylAxis: x.axis === 'auto' ? null : x.axis };
+                    return (
+                      <button
+                        key={x.axis}
+                        className={(selectedBlock.cylAxis ?? 'auto') === x.axis ? 'selected' : ''}
+                        title={CYL_AXIS_NOTE}
+                        onClick={() => commit(symmetric ? setBlockLookSymmetric(blueprint, selected!, lookOf) : setBlockLook(blueprint, selected!, lookOf))}
+                      >
+                        円柱:{x.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedBlock.type === 'joint' && (
+                  <label className="toggle" title={TIRE_NOTE}>
+                    <input
+                      type="checkbox"
+                      checked={!!selectedBlock.tire}
+                      onChange={(e) =>
+                        commit(
+                          symmetric
+                            ? setBlockLookSymmetric(blueprint, selected!, { tire: e.target.checked })
+                            : setBlockLook(blueprint, selected!, { tire: e.target.checked }),
+                        )
+                      }
+                    />
+                    タイヤモード(半径{BLOCK_OPTIONS.tireRadiusScale}倍・コスト+{BLOCK_OPTIONS.tireCost})
+                  </label>
+                )}
+              </>
+            )}
             <label className="toggle">
               <input
                 type="checkbox"

@@ -28,7 +28,10 @@ export class EpisodeViewer {
   private stageMesh: StageMesh | null = null;
   /** 種目の表示物(ボール・壁など) */
   private propMeshes: THREE.Mesh[] = [];
-  private sphereMeshes: { mesh: THREE.Mesh; body: { translation(): { x: number; y: number; z: number }; rotation(): { x: number; y: number; z: number; w: number } } }[] = [];
+  private sphereMeshes: {
+    mesh: THREE.Mesh;
+    body: { translation(): { x: number; y: number; z: number }; rotation(): { x: number; y: number; z: number; w: number } };
+  }[] = [];
   private frame = 0;
   private last = 0;
   private acc = 0;
