@@ -1,4 +1,5 @@
 // 「AIの考え」の表示:判断脳が目で見ているタイル(危ないと見ている場所)と、進みたい向きの矢印を、試合の上に重ねる。
+// 判断脳のない場面(運動脳のトレーニング)では、運動脳に出している指令(進む向き)の矢印だけを出す。
 //   ・目の61マス:安全なら小さな白い点、危険マークならオレンジ〜赤、穴(崩れた場所)なら紫
 //   ・矢印:判断脳が運動脳に出した指令(進む向きと速さ)。長いほど速く進みたい
 // 判断脳の入力(DecisionBrain.input)をそのまま読むので、AIが実際に見ている値と同じになる。
@@ -45,14 +46,15 @@ export class BrainOverlay {
 
   /** 表示を最新にする(判断脳のない場面では何も出さない) */
   update(ep: Episode | null): void {
-    if (!ep || !hasBrains(ep)) {
+    if (!ep) {
       this.root.visible = false;
       return;
     }
+    // 判断脳のない場面(移動・追跡・穴をまたぐ などの運動脳のトレーニング)でも、進みたい向きの矢印は出す
     this.root.visible = true;
     for (let i = 0; i < 2; i++) {
       const f = ep.fighters[i] as Fighter | undefined;
-      const brain = f && !f.out ? ep.decisionBrain(i) : null;
+      const brain = f && !f.out && hasBrains(ep) ? ep.decisionBrain(i) : null;
       this.eyes[i].visible = !!brain;
       this.arrows[i].visible = !!f && !f.out && !!f.command;
       if (f && brain) this.updateEye(i, f, brain);

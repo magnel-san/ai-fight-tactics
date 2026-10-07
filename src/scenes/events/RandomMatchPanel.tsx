@@ -54,7 +54,7 @@ export function RandomMatchPanel({ charId, character, eligible, viewer, rapier }
   const [myName, setMyName] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState('');
   // ブラウザに保存している情報(取得するのは、しばらく取得していないときに開いたとき・試合のあと・更新ボタンのときだけ)
-  const [snap, setSnap] = useState<api.RankedSnapshot>({ versions: [], players: new Map(), results: [], randomMatches: [], randomResults: [], syncedAt: 0 });
+  const [snap, setSnap] = useState<api.RankedSnapshot>({ versions: [], players: new Map(), results: [], randomMatches: [], randomResults: [], syncedAt: 0, outdated: false, needsSql: false });
   const { versions, players, randomMatches: matches, randomResults: results } = snap;
   /** 更新ボタンを押したばかり(しばらく押せない) */
   const [cooling, setCooling] = useState(false);

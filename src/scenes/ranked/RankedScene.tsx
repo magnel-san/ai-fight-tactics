@@ -17,6 +17,7 @@ import {
   tournamentStart,
   type EntryVersion,
   type RankedOutcome,
+  type RankedResultRow,
 } from '../../core/ranked/tournament';
 import { MatchEpisode } from '../../core/sim/match';
 import * as api from '../../online/ranked';
@@ -71,7 +72,17 @@ const BACKFILL = 4;
 const outcomes = new Map<string, RankedOutcome>();
 
 /** トーナメントの試合を順に計算する(前の試合の勝者が次の試合に進む) */
-async function resolveTournament(t: number, versions: readonly EntryVersion[], onProgress?: (lt: LiveTournament) => void): Promise<LiveTournament> {
+/**
+ * トーナメントの試合を順に計算する(前の試合の勝者が次の試合に進む)。
+ * official にサーバーの正式な結果があれば、勝ち上がりはそれに従う(端末ごとに組み合わせが変わらないように)
+ */
+async function resolveTournament(
+  t: number,
+  versions: readonly EntryVersion[],
+  official: readonly RankedResultRow[],
+  onProgress?: (lt: LiveTournament) => void,
+): Promise<LiveTournament> {
+  const officialOf = new Map(official.filter((r) => r.tournament === t).map((r) => [r.match, r]));
   const entrants = entrantsFor(t, versions);
   const bracket = bracketFor(entrants.length);
   const matches: LiveMatch[] = bracket.map((m) => ({
@@ -109,6 +120,12 @@ async function resolveTournament(t: number, versions: readonly EntryVersion[], o
       if (!o) {
         o = await api.computeMatch(fa, fb, matchSeed(t, bm.index));
         outcomes.set(key, o);
+      }
+      // サーバーの正式な結果(同じ組み合わせ)があれば、勝敗と勝ち上がりはそちらを使う
+      const off = officialOf.get(bm.index);
+      if (off && off.a === m.a!.id && off.b === m.b!.id) {
+        const advance = off.advance ?? (off.winner !== null ? off.winner : o.advance);
+        o = { ...o, winner: off.winner, advance, cause: (off.cause as RankedOutcome['cause'] | null) ?? o.cause };
       }
       m.outcome = o;
     }
@@ -179,7 +196,16 @@ export function RankedScene({ charId, character, active, view }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('rating');
   const [division, setDivision] = useState<Division>('tournament');
   // サーバーから取得してブラウザに保存している情報(取得するのは、開いたとき・トーナメントの開始・更新ボタンのときだけ)
-  const [snap, setSnap] = useState<api.RankedSnapshot>({ versions: [], players: new Map(), results: [], randomMatches: [], randomResults: [], syncedAt: 0 });
+  const [snap, setSnap] = useState<api.RankedSnapshot>({
+    versions: [],
+    players: new Map(),
+    results: [],
+    randomMatches: [],
+    randomResults: [],
+    syncedAt: 0,
+    outdated: false,
+    needsSql: false,
+  });
   const { versions, players, results, randomMatches, randomResults } = snap;
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
@@ -265,8 +291,8 @@ export function RankedScene({ charId, character, active, view }: Props) {
           }
           s = await api.rankedSnapshot();
           const vs = s.versions;
-          const cur = await resolveTournament(t, vs, (lt) => !cancelled && setLive(lt));
-          const last = await resolveTournament(t - 1, vs, (lt) => !cancelled && setPrev(lt));
+          const cur = await resolveTournament(t, vs, s.results, (lt) => !cancelled && setLive(lt));
+          const last = await resolveTournament(t - 1, vs, s.results, (lt) => !cancelled && setPrev(lt));
           const pending = [...reportsOf(cur), ...reportsOf(last)];
           // 誰も計算しなかった過去のトーナメントの結果を補う
           const have = new Set(s.results.map((r) => `${r.tournament}:${r.match}`));
@@ -275,10 +301,10 @@ export function RankedScene({ charId, character, active, view }: Props) {
             const n = bracketFor(entrantsFor(tk, vs).length).length;
             let missing = false;
             for (let i = 0; i < n; i++) if (!have.has(`${tk}:${i}`)) missing = true;
-            if (missing) pending.push(...reportsOf(await resolveTournament(tk, vs)));
+            if (missing) pending.push(...reportsOf(await resolveTournament(tk, vs, s.results)));
           }
-          // 報告はまとめて1回で(報告済みの試合は送らない)
-          await api.reportResults(pending);
+          // 報告はまとめて1回で(報告済みの試合は送らない)。送ったら、正式な結果を取り直してランキングにそろえる
+          if ((await api.reportResults(pending)) > 0) s = await api.syncRanked();
           const nameOf = (owner: string) => s.players.get(owner) ?? '名無し';
           await saveMyReplays(last, myId, nameOf);
           await saveMyReplays(cur, myId, nameOf);
@@ -415,17 +441,9 @@ export function RankedScene({ charId, character, active, view }: Props) {
   const now = Date.now();
   const playerName = (owner: string) => players.get(owner) ?? '名無し';
 
-  // トーナメントのランキング:試合の時刻が過ぎた結果だけを数える。
-  // サーバーの結果に、このブラウザで計算した結果(まだ取り込んでいないもの)を足す
-  const merged = [...results];
-  const known = new Set(results.map((r) => `${r.tournament}:${r.match}`));
-  for (const lt of [prev, live]) {
-    for (const m of lt?.matches ?? []) {
-      if (!m.outcome || m.forfeit || !m.a || !m.b || known.has(`${lt!.t}:${m.index}`)) continue;
-      merged.push({ tournament: lt!.t, match: m.index, a: m.a.id, b: m.b.id, winner: m.outcome.winner, cause: m.outcome.cause });
-    }
-  }
-  const visible = merged.filter((r) => matchSlotStart(r.tournament, r.match) + slotMs <= now);
+  // トーナメントのランキング:サーバーの正式な結果だけで数える(このブラウザで計算した結果は混ぜない。
+  // 混ぜると、端末ごとに計算の版や取得のタイミングが違うときに、ランキングが端末ごとに変わってしまう)。試合の時刻が過ぎた結果だけを数える
+  const visible = results.filter((r) => matchSlotStart(r.tournament, r.match) + slotMs <= now);
   const tournamentStats = computeStats(visible, (id) => groups.keyOf.get(id));
   const randomStatsMap = api.randomStats(randomMatches, randomResults, groups);
   const currentKeys = new Set([...latestByOwner.values()].map((v) => groups.keyOf.get(v.id)!));
@@ -660,6 +678,12 @@ export function RankedScene({ charId, character, active, view }: Props) {
     <div className="battle">
       <aside className="panel">
         <h2>{VIEW_TITLES[view]}</h2>
+        {snap.outdated && <p className="message error">新しいバージョンがあります。ページを再読み込みしてください(古いページの計算は報告しません)</p>}
+        {snap.needsSql && (
+          <p className="message">
+            サーバーの設定が古いため、端末によって結果がずれることがあります。Supabase で supabase/fix-ranked-consistency.sql を実行してください
+          </p>
+        )}
         <div className="refresh-row">
           <span className="muted small">
             {snap.syncedAt ? `最終更新 ${new Date(snap.syncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'まだ取得していません'}

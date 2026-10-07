@@ -11,6 +11,7 @@
 import { battleFighter, canEnter, type Character } from '../core/character';
 import { characterToJson, parseCharacter } from '../core/codec';
 import type { RaceRecord } from '../core/ranked/run';
+import { SIM_VERSION } from '../core/config';
 import {
   computeRatings,
   randomMatchSeed,
@@ -38,7 +39,11 @@ export class RankedNotReadyError extends Error {
 function check<T>(res: { data: T | null; error: { code?: string; message: string } | null }): T {
   if (res.error) {
     const code = res.error.code ?? '';
-    if (code === '42P01' || code === 'PGRST205' || /does not exist|schema cache/.test(res.error.message)) throw new RankedNotReadyError();
+    // 列がない(サーバーの SQL が古い)ときは、呼び出し側で前の形に切り替えられるよう、コードをつけたまま投げる
+    if (code === '42703' || code === 'PGRST204' || code === '42P10') throw Object.assign(new Error(res.error.message), { code });
+    // テーブルがない(schema-ranked.sql を実行していない)
+    if (code === '42P01' || code === 'PGRST205' || /relation .* does not exist|Could not find the table/.test(res.error.message))
+      throw new RankedNotReadyError();
     throw serverError(res.error);
   }
   return res.data as T;
@@ -86,6 +91,8 @@ export interface RandomResult {
   cause: string | null;
   /** その結果を報告した人数 */
   reports: number;
+  /** 計算の版(古い報告は0) */
+  sim?: number;
 }
 
 /** ブラウザに保存しているランクマッチの情報 */
@@ -97,6 +104,10 @@ export interface RankedSnapshot {
   randomResults: RandomResult[];
   /** 最後にサーバーから取得した時刻 [ms](一度も取得していなければ 0) */
   syncedAt: number;
+  /** サーバーに、このページより新しい計算の版の結果がある(ページが古い。報告しない) */
+  outdated: boolean;
+  /** サーバーの設定(SQL)が古く、計算の版を記録できない(fix-ranked-consistency.sql を実行してほしい) */
+  needsSql: boolean;
 }
 
 interface Cache {
@@ -109,6 +120,7 @@ interface Cache {
   randomMatches: RandomMatch[];
   randomResults: RandomResult[];
   syncedAt: number;
+  needsSql?: boolean;
 }
 
 const emptyCache = (): Cache => ({ version: 1, versions: [], players: [], playersAt: '', results: [], randomMatches: [], randomResults: [], syncedAt: 0 });
@@ -132,6 +144,8 @@ const toSnapshot = (c: Cache): RankedSnapshot => ({
   randomMatches: c.randomMatches,
   randomResults: c.randomResults,
   syncedAt: c.syncedAt,
+  outdated: c.results.some((r) => (r.sim ?? 0) > SIM_VERSION) || c.randomResults.some((r) => (r.sim ?? 0) > SIM_VERSION),
+  needsSql: !!c.needsSql,
 });
 
 const listeners = new Set<(s: RankedSnapshot) => void>();
@@ -200,18 +214,30 @@ async function doSync(): Promise<RankedSnapshot> {
 
   // トーナメントの結果:最近のトーナメントだけ取り直す(古いものは確定済み)
   const since = c.results.length ? tournamentAt(Date.now()) - RESULT_WINDOW : 0;
-  const results = await pages<RankedResultRow>((from, to) =>
-    sb
-      .from('ranked_results')
-      .select('tournament, match, a, b, winner, cause, reports')
-      .gte('tournament', since)
-      .order('tournament')
-      .order('match')
-      .range(from, to),
-  );
+  // サーバーの SQL が古い(版の列がない)ときは、前の形で取得する
+  let needsSql = false;
+  const resultQuery = (cols: string) =>
+    pages<RankedResultRow>((from, to) =>
+      sb.from('ranked_results').select(cols).gte('tournament', since).order('tournament').order('match').range(from, to).returns<RankedResultRow[]>(),
+    );
+  let results: RankedResultRow[];
+  try {
+    results = await resultQuery('tournament, match, a, b, winner, advance, cause, sim, reports');
+  } catch (e) {
+    if (!isMissingColumn(e)) throw e;
+    needsSql = true;
+    results = await resultQuery('tournament, match, a, b, winner, cause, reports');
+  }
   const mergedResults = [
     ...c.results.filter((r) => r.tournament < since),
-    ...results.map((r) => ({ ...r, tournament: Number(r.tournament), a: Number(r.a), b: Number(r.b), reports: Number(r.reports ?? 1) })),
+    ...results.map((r) => ({
+      ...r,
+      tournament: Number(r.tournament),
+      a: Number(r.a),
+      b: Number(r.b),
+      reports: Number(r.reports ?? 1),
+      sim: Number(r.sim ?? 0),
+    })),
   ];
 
   // ランダムマッチの試合(追記のみ):前回より新しい id だけ
@@ -227,15 +253,24 @@ async function doSync(): Promise<RankedSnapshot> {
   let randomResults = c.randomResults;
   if (pendingIds.length > 0) {
     const fromId = Math.min(...pendingIds);
-    const rows = await pages<{ match_id: number; winner: 0 | 1 | null; cause: string | null; reports: number }>((from, to) =>
-      sb.from('random_results').select('match_id, winner, cause, reports').gte('match_id', fromId).order('match_id').range(from, to),
-    );
+    type Row = { match_id: number; winner: 0 | 1 | null; cause: string | null; reports: number; sim?: number };
+    const randomQuery = (cols: string) =>
+      pages<Row>((from, to) => sb.from('random_results').select(cols).gte('match_id', fromId).order('match_id').range(from, to).returns<Row[]>());
+    let rows: Row[];
+    try {
+      rows = await randomQuery(needsSql ? 'match_id, winner, cause, reports' : 'match_id, winner, cause, sim, reports');
+    } catch (e) {
+      if (!isMissingColumn(e)) throw e;
+      needsSql = true;
+      rows = await randomQuery('match_id, winner, cause, reports');
+    }
     const byId = new Map(randomResults.map((r) => [r.matchId, r]));
-    for (const r of rows) byId.set(Number(r.match_id), { matchId: Number(r.match_id), winner: r.winner, cause: r.cause, reports: Number(r.reports ?? 1) });
+    for (const r of rows)
+      byId.set(Number(r.match_id), { matchId: Number(r.match_id), winner: r.winner, cause: r.cause, reports: Number(r.reports ?? 1), sim: Number(r.sim ?? 0) });
     randomResults = [...byId.values()].sort((x, y) => x.matchId - y.matchId);
   }
 
-  cache = { version: 1, versions, players: [...playerMap], playersAt, results: mergedResults, randomMatches, randomResults, syncedAt: Date.now() };
+  cache = { version: 1, versions, players: [...playerMap], playersAt, results: mergedResults, randomMatches, randomResults, syncedAt: Date.now(), needsSql };
   return commit(cache);
 }
 
@@ -320,9 +355,20 @@ export async function startRandomMatch(c: Character, monster: string): Promise<R
 
 export async function reportRandomResult(matchId: number, o: RankedOutcome): Promise<void> {
   await ensureSession();
-  const res = await supabaseClient()
+  const c = await loadCache();
+  if (toSnapshot(c).outdated) return;
+  const sb = supabaseClient();
+  const res = await sb
     .from('random_reports')
-    .upsert({ match_id: matchId, winner: o.winner, cause: o.cause }, { onConflict: 'match_id,reporter', ignoreDuplicates: true });
+    .upsert({ match_id: matchId, winner: o.winner, cause: o.cause, sim: SIM_VERSION }, { onConflict: 'match_id,reporter,sim', ignoreDuplicates: true });
+  if (res.error && isMissingColumn(res.error)) {
+    check(
+      await sb
+        .from('random_reports')
+        .upsert({ match_id: matchId, winner: o.winner, cause: o.cause }, { onConflict: 'match_id,reporter', ignoreDuplicates: true }),
+    );
+    return;
+  }
   check(res);
 }
 
@@ -415,22 +461,50 @@ let reportedKeys: Set<string> | null = null;
 /**
  * 計算した試合の結果をまとめて報告する。一度報告した試合と、すでに十分な人数(3人以上)が同じ結果を報告した試合は送らない
  */
-export async function reportResults(list: readonly PendingReport[]): Promise<void> {
+export async function reportResults(list: readonly PendingReport[]): Promise<number> {
   reportedKeys ??= new Set(((await getSetting<string[]>(REPORTED_KEY)) ?? []).slice(-1000));
   const c = await loadCache();
-  const settledKeys = new Set(c.results.filter((r) => (r.reports ?? 1) >= 3).map((r) => `${r.tournament}:${r.match}`));
-  const rows = list.filter((r) => !reportedKeys!.has(`${r.tournament}:${r.match}`) && !settledKeys.has(`${r.tournament}:${r.match}`));
-  if (rows.length === 0) return;
+  // このページより新しい版の結果がサーバーにあるなら、古い計算は報告しない
+  if (toSnapshot(c).outdated) return 0;
+  const key = (r: { tournament: number; match: number }) => `${SIM_VERSION}:${r.tournament}:${r.match}`;
+  // すでに十分な人数(3人以上)が、同じ版で報告した試合は送らない
+  const settledKeys = new Set(c.results.filter((r) => (r.reports ?? 1) >= 3 && (r.sim ?? 0) === SIM_VERSION).map(key));
+  const rows = list.filter((r) => !reportedKeys!.has(key(r)) && !settledKeys.has(key(r)));
+  if (rows.length === 0) return 0;
   await ensureSession();
-  const res = await supabaseClient()
-    .from('ranked_reports')
-    .upsert(
-      rows.map((r) => ({ tournament: r.tournament, match: r.match, a: r.a, b: r.b, winner: r.outcome.winner, cause: r.outcome.cause })),
-      { onConflict: 'tournament,match,reporter', ignoreDuplicates: true },
-    );
-  check(res);
-  for (const r of rows) reportedKeys.add(`${r.tournament}:${r.match}`);
+  const sb = supabaseClient();
+  const body = rows.map((r) => ({
+    tournament: r.tournament,
+    match: r.match,
+    a: r.a,
+    b: r.b,
+    winner: r.outcome.winner,
+    advance: r.outcome.advance,
+    cause: r.outcome.cause,
+    sim: SIM_VERSION,
+  }));
+  const res = await sb.from('ranked_reports').upsert(body, { onConflict: 'tournament,match,reporter,sim', ignoreDuplicates: true });
+  if (res.error && isMissingColumn(res.error)) {
+    // サーバーの SQL が古い:前の形で送る
+    const old = body.map(({ advance: _a, sim: _s, ...rest }) => rest);
+    check(await sb.from('ranked_reports').upsert(old, { onConflict: 'tournament,match,reporter', ignoreDuplicates: true }));
+  } else check(res);
+  for (const r of rows) reportedKeys.add(key(r));
   await setSetting(REPORTED_KEY, [...reportedKeys].slice(-1000));
+  return rows.length;
+}
+
+/** サーバーの SQL が古く、列(sim・advance)がない・主キーが合わないときのエラーか */
+function isMissingColumn(e: unknown): boolean {
+  const err = e as { code?: string; message?: string };
+  const code = err?.code ?? '';
+  const msg = err?.message ?? String(e);
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    code === '42P10' ||
+    /column .*(sim|advance)|sim.*does not exist|advance.*does not exist|no unique or exclusion constraint/.test(msg)
+  );
 }
 
 // ---- 計算用Worker ----

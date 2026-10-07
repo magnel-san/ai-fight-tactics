@@ -248,6 +248,10 @@ export interface RankedResultRow {
   cause: string | null;
   /** その結果を報告した人数(サーバーの正式な結果だけ) */
   reports?: number;
+  /** 引き分けのときに勝ち上がった側(サーバーの正式な結果。古い報告にはない) */
+  advance?: 0 | 1 | null;
+  /** 計算の版(古い報告は0) */
+  sim?: number;
 }
 
 export interface PlayerStats {
