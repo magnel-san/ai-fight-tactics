@@ -18,8 +18,9 @@ import { TASK_ORDER, type TaskName } from './training/tasks';
  *   4:ブロックに形(shape)と摩擦オン(grip)を追加。グリップブロックを「基礎 + 摩擦オン」に置き換え、雲・浮力ブロックを追加
  *   5:浮力ブロックを風ブロックに置き換え(下向きに吹く風にする)
  *   6:円柱の軸の向き(cylAxis)と、関節のタイヤモード(tire)を追加(古いデータはそのまま読める)
+ *   7:関節の360°回転(spin)を追加(古いデータはそのまま読める)
  */
-export const FORMAT_VERSION = 6;
+export const FORMAT_VERSION = 7;
 
 interface BrainJson {
   inputs: number;
@@ -117,6 +118,8 @@ function migrate(input: { version?: unknown }): CharacterJson {
   if (json.version === 4) json = migrate4to5(json);
   // 5 → 6:項目を足しただけなので、中身は変えない
   if (json.version === 5) json = { ...json, version: 6 };
+  // 6 → 7:項目を足しただけ
+  if (json.version === 6) json = { ...json, version: 7 };
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
 }
@@ -236,6 +239,10 @@ function parseBlueprint(v: unknown): Blueprint {
     if (o.tire !== undefined && o.tire !== false) {
       if (o.tire !== true) throw new Error(`ブロック${i}のタイヤの設定が不正です`);
       spec.tire = true;
+    }
+    if (o.spin !== undefined && o.spin !== false) {
+      if (o.spin !== true) throw new Error(`ブロック${i}の関節の回り方が不正です`);
+      spec.spin = true;
     }
     return spec;
   });

@@ -1,7 +1,7 @@
 // ブロックの形・摩擦オン・雲・風・弾力のばねのテスト
 import { beforeAll, describe, expect, it } from 'vitest';
 import { BLOCK_OPTIONS, BLOCKS, BOUNCY_SPRING, CREATURE, PHYSICS, WIND_BLOCK } from '../src/core/config';
-import { applyBlockForces, spawnCreature, type Creature } from '../src/core/creature/assemble';
+import { applyBlockForces, setJointTargets, spawnCreature, type Creature } from '../src/core/creature/assemble';
 import { blockCost, cylinderAxis, segmentsOf, totalCost, validate, type BlockSpec, type Blueprint } from '../src/core/creature/blueprint';
 import { addBlock, setBlockLook } from '../src/core/creature/edit';
 import { initRapier, type Rapier } from '../src/core/physics/rapier';
@@ -196,5 +196,46 @@ describe('円柱の向きとタイヤモード', () => {
     const tire = simulate(wheelBody({ tire: true }), 120, 0.8);
     expect(tire.y - normal.y).toBeGreaterThan(0.07);
     expect(tire.y - normal.y).toBeLessThan(0.13);
+  });
+});
+
+describe('関節の360°回転', () => {
+  /** 左右にタイヤを付けた体(回転軸 x)。spin で回り方を切り替える */
+  const car = (spin: boolean): Blueprint => {
+    const look = { shape: 'cylinder' as const, tire: true, ...(spin ? { spin: true } : {}) };
+    return {
+      blocks: [
+        core,
+        { id: 1, type: 'joint', parent: 0, face: '+x', axis: 'x', ...look },
+        { id: 2, type: 'joint', parent: 0, face: '-x', axis: 'x', ...look },
+        { id: 3, type: 'base', parent: 0, face: '-z', shape: 'sphere' },
+      ],
+    };
+  };
+
+  function drive(bp: Blueprint): number {
+    const world = new R.World({ x: 0, y: PHYSICS.gravity, z: 0 });
+    world.timestep = PHYSICS.dt;
+    world.createCollider(R.ColliderDesc.cuboid(30, 0.5, 30).setTranslation(0, -0.5, 0));
+    const c = spawnCreature(R, world, bp, { position: { x: 0, y: 0.35, z: 0 }, yaw: 0 });
+    for (let i = 0; i < 180; i++) {
+      setJointTargets(c, [1, 1]);
+      world.step();
+    }
+    const p = c.bodies[0].translation();
+    world.free();
+    return Math.sqrt(p.x * p.x + p.z * p.z);
+  }
+
+  it('360°の関節は回り続けるので、タイヤで転がって進む。180°では進まない', () => {
+    expect(validate(car(true))).toEqual([]);
+    const spinDist = drive(car(true));
+    const halfDist = drive(car(false));
+    expect(spinDist).toBeGreaterThan(1.0);
+    expect(halfDist).toBeLessThan(0.5);
+  });
+
+  it('360°は関節ブロックだけに使える', () => {
+    expect(validate({ blocks: [core, { id: 1, type: 'base', parent: 0, face: '+x', spin: true }] }).length).toBeGreaterThan(0);
   });
 });

@@ -159,11 +159,13 @@ export function spawnCreature(R: Rapier, world: InstanceType<Rapier['World']>, b
     const data = R.JointData.revolute(anchor1, anchor2, { x: ax, y: ay, z: az });
     const joint = world.createImpulseJoint(data, bodies[segmentOf[parent]], bodies[segmentOf[b.id]], true) as ImpulseJoint as RevoluteImpulseJoint;
     joint.setContactsEnabled(false);
-    joint.setLimits(-CREATURE.jointLimit, CREATURE.jointLimit);
+    // 180°の関節は ±90°の範囲で角度を指定し、360°の関節(spin)は範囲なしで回る速さを指定する
+    if (!b.spin) joint.setLimits(-CREATURE.jointLimit, CREATURE.jointLimit);
     // ForceBased:ばね定数・減衰・上限をトルク(N·m)で扱う。重い手足ほどゆっくり動く
     joint.configureMotorModel(R.MotorModel.ForceBased);
     joint.setMotorMaxForce(CREATURE.jointMaxTorque);
-    joint.configureMotorPosition(0, CREATURE.jointStiffness, CREATURE.jointDamping);
+    if (b.spin) joint.configureMotorVelocity(0, CREATURE.spinDamping);
+    else joint.configureMotorPosition(0, CREATURE.jointStiffness, CREATURE.jointDamping);
     joints.push(joint);
     jointBlockIds.push(b.id);
   }
@@ -235,7 +237,9 @@ export function actuatorsOf(creature: Creature): number {
 export function setJointTargets(creature: Creature, targets: ArrayLike<number>): void {
   creature.joints.forEach((joint, i) => {
     const t = Math.max(-1, Math.min(1, targets[i]));
-    joint.configureMotorPosition(t * CREATURE.jointLimit, CREATURE.jointStiffness, CREATURE.jointDamping);
+    // 360°の関節は回る速さ、180°の関節は角度
+    if (creature.blueprint.blocks[creature.jointBlockIds[i]].spin) joint.configureMotorVelocity(t * CREATURE.spinMaxSpeed, CREATURE.spinDamping);
+    else joint.configureMotorPosition(t * CREATURE.jointLimit, CREATURE.jointStiffness, CREATURE.jointDamping);
   });
   const n = creature.joints.length;
   creature.pistons.forEach((piston, i) => {
@@ -249,7 +253,11 @@ export function setJointTargets(creature: Creature, targets: ArrayLike<number>):
  * 関節は角度/可動範囲と角速度、ピストンは伸び(縮み -1 〜 伸び 1)と伸びる速さ
  */
 export function actuatorStates(creature: Creature): { position: number; velocity: number }[] {
-  const joints = jointStates(creature).map((s) => ({ position: s.angle / CREATURE.jointLimit, velocity: s.velocity / BRAIN.jointVelScale }));
+  // 360°の関節の角度は ±π の範囲なので π でわる
+  const joints = jointStates(creature).map((s, i) => ({
+    position: s.angle / (creature.blueprint.blocks[creature.jointBlockIds[i]].spin ? Math.PI : CREATURE.jointLimit),
+    velocity: s.velocity / BRAIN.jointVelScale,
+  }));
   const pistons = pistonStates(creature).map((s) => ({
     position: (2 * s.extension) / CREATURE.pistonStroke - 1,
     velocity: s.velocity / BRAIN.pistonVelScale,

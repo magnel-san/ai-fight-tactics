@@ -141,7 +141,8 @@ export function GuideScene({ character, onGo }: Props) {
         </p>
         <p className="muted small">
           円柱にしたブロックは、円柱の向き(自動・左右・上下・前後)を選べます。関節を円柱にして「タイヤモード」をオンにすると、半径が
-          {BLOCK_OPTIONS.tireRadiusScale}倍の黒いタイヤになります(コスト+{BLOCK_OPTIONS.tireCost})。関節の回転軸と円柱の向きをそろえると転がって進めます。
+          {BLOCK_OPTIONS.tireRadiusScale}倍の黒いタイヤになります(コスト+{BLOCK_OPTIONS.tireCost}
+          )。関節の回り方を「360°(回転)」にして、回転軸と円柱の向きをそろえると、転がって進めます(「180°(角度)」の関節は±90°までしか動かないので、脚や腕に向いています)。
           タイヤの周り(回転軸に垂直な4方向)には、重ならないように親以外のブロックを置けません。
         </p>
       </section>

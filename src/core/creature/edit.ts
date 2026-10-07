@@ -42,6 +42,8 @@ export interface BlockLook {
   cylAxis?: Axis | null;
   /** タイヤモード(円柱にした関節だけ) */
   tire?: boolean;
+  /** 360°回転(関節だけ) */
+  spin?: boolean;
 }
 
 /** 形と摩擦を設定したブロック(既定の値のときは持たない) */
@@ -63,12 +65,19 @@ function withLook(b: BlockSpec, look: BlockLook | undefined): BlockSpec {
     if (look.tire) next.tire = true;
     else delete next.tire;
   }
+  if (look?.spin !== undefined) {
+    if (look.spin) next.spin = true;
+    else delete next.spin;
+  }
   // 円柱の向きとタイヤは円柱のときだけ、タイヤは関節のときだけ持つ
   if (next.shape !== 'cylinder') {
     delete next.cylAxis;
     delete next.tire;
   }
-  if (next.type !== 'joint') delete next.tire;
+  if (next.type !== 'joint') {
+    delete next.tire;
+    delete next.spin;
+  }
   return next;
 }
 

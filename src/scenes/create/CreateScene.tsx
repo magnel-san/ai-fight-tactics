@@ -36,7 +36,7 @@ import { EditorView } from './EditorView';
 
 export const PALETTE: { type: Exclude<BlockType, 'core'>; label: string; note: string }[] = [
   { type: 'base', label: '基礎', note: '標準的な重さ・摩擦・反発のブロック' },
-  { type: 'joint', label: '関節', note: '脳で動かせるヒンジ(±90°)。円柱にすると車輪になる' },
+  { type: 'joint', label: '関節', note: '脳で動かせるヒンジ。180°(角度を決める)か360°(回り続ける。車輪に)を選べる' },
   { type: 'piston', label: 'ピストン', note: '1マス伸び縮みする(ジャンプや押し出しに)' },
   { type: 'bouncy', label: '弾力', note: 'ばねで伸び縮みし、当たった相手を弾き飛ばす' },
   { type: 'cloud', label: '雲', note: 'とても軽い。体を大きくしても重くならない(押されると飛ばされやすい)' },
@@ -77,9 +77,15 @@ const PISTON_DIRS: { dir: Face | 'face'; label: string; note: string }[] = [
   { dir: '-x', label: '右', note: '右に伸びる' },
 ];
 
+/** 関節の回り方 */
+const SPIN_MODES: { spin: boolean; label: string; note: string }[] = [
+  { spin: false, label: '180°(角度)', note: '±90°の範囲で、脳が角度を決める。脚や腕に' },
+  { spin: true, label: '360°(回転)', note: '止まらずに回り続け、脳が回る速さと向きを決める。車輪やタイヤに' },
+];
+
 const CYL_AXIS_NOTE = '円柱の軸の向き。自動:関節は回転軸(車輪になる)、ピストン・風は向き、ほかは付けた面の向き';
 const TIRE_NOTE =
-  '円柱にした関節の半径を大きくして、タイヤにする。回転軸に垂直な4方向の隣には、親以外のブロックを置けない(重ならないように)。回転軸と円柱の向きをそろえると転がる';
+  '円柱にした関節の半径を大きくして、タイヤにする。回転軸に垂直な4方向の隣には、親以外のブロックを置けない(重ならないように)。関節を360°にして、回転軸と円柱の向きをそろえると転がって進む';
 
 const dirLabel = (f: Face) => PISTON_DIRS.find((d) => d.dir === f)?.label ?? f;
 
@@ -109,6 +115,8 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   /** 置く円柱の軸の向きと、タイヤモード(円柱の関節だけ) */
   const [cylAxis, setCylAxis] = useState<Axis | 'auto'>('auto');
   const [tire, setTire] = useState(false);
+  /** 置く関節の回り方(false = 180°、true = 360°) */
+  const [spin, setSpin] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
   /** 右クリックで選んだブロック */
   const [selected, setSelected] = useState<number | null>(null);
@@ -119,7 +127,13 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
 
   // イベントハンドラから常に最新の値を読むための参照
   /** 置くブロックの見た目(形・摩擦・円柱の向き・タイヤ) */
-  const look = { shape, grip, cylAxis: cylAxis === 'auto' ? null : cylAxis, tire: shape === 'cylinder' && type === 'joint' && tire };
+  const look = {
+    shape,
+    grip,
+    cylAxis: cylAxis === 'auto' ? null : cylAxis,
+    tire: shape === 'cylinder' && type === 'joint' && tire,
+    spin: type === 'joint' && spin,
+  };
   const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir, look });
   latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir, look };
 
@@ -190,7 +204,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => setSelected(null), [blueprint.blocks.length]);
   useEffect(() => viewRef.current?.setSymmetric(symmetric), [symmetric]);
   useEffect(() => viewRef.current?.setGhostType(type), [type]);
-  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric, pistonDir, shape, grip, cylAxis, tire, type]);
+  useEffect(() => viewRef.current?.refreshHover(), [axis, symmetric, pistonDir, shape, grip, cylAxis, tire, spin, type]);
 
   // キーボード操作
   useEffect(() => {
@@ -296,6 +310,14 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
                 </button>
               ))}
             </div>
+            <h3>関節の回り方</h3>
+            <div className="segmented">
+              {SPIN_MODES.map((m) => (
+                <button key={String(m.spin)} className={spin === m.spin ? 'selected' : ''} onClick={() => setSpin(m.spin)} title={m.note}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </>
         )}
 
@@ -327,7 +349,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           <div className="selected-block">
             <div>
               {selectedBlock.type === 'core' ? 'コア' : PALETTE.find((p) => p.type === selectedBlock.type)?.label}
-              {selectedBlock.type === 'joint' && `(軸 ${selectedBlock.axis!.toUpperCase()})`}
+              {selectedBlock.type === 'joint' && `(軸 ${selectedBlock.axis!.toUpperCase()}・${selectedBlock.spin ? '360°' : '180°'})`}
               {selectedBlock.type === 'piston' && `(${dirLabel(pistonDirection(selectedBlock))}に伸びる)`}
               {selectedBlock.type === 'wind' && `(${dirLabel(pistonDirection(selectedBlock))}に吹く)`}
             </div>
@@ -412,17 +434,33 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
               摩擦オン(コスト+{BLOCK_OPTIONS.gripCost})
             </label>
             {selectedBlock.type === 'joint' && (
-              <div className="segmented">
-                {AXES.map((a) => (
-                  <button
-                    key={a.axis}
-                    className={selectedBlock.axis === a.axis ? 'selected' : ''}
-                    onClick={() => commit(symmetric ? setJointAxisSymmetric(blueprint, selected!, a.axis) : setJointAxis(blueprint, selected!, a.axis))}
-                  >
-                    {a.label}
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="segmented">
+                  {AXES.map((a) => (
+                    <button
+                      key={a.axis}
+                      className={selectedBlock.axis === a.axis ? 'selected' : ''}
+                      onClick={() => commit(symmetric ? setJointAxisSymmetric(blueprint, selected!, a.axis) : setJointAxis(blueprint, selected!, a.axis))}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="segmented">
+                  {SPIN_MODES.map((m) => (
+                    <button
+                      key={String(m.spin)}
+                      className={!!selectedBlock.spin === m.spin ? 'selected' : ''}
+                      title={m.note}
+                      onClick={() =>
+                        commit(symmetric ? setBlockLookSymmetric(blueprint, selected!, { spin: m.spin }) : setBlockLook(blueprint, selected!, { spin: m.spin }))
+                      }
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
             <div className="row">
               <button

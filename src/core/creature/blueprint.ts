@@ -25,6 +25,11 @@ export interface BlockSpec {
   cylAxis?: Axis;
   /** タイヤモード(円柱にした関節のみ)。半径が大きくなる。コストが増える */
   tire?: boolean;
+  /**
+   * 関節の回り方(関節のみ)。省略時は180°(±90°の範囲で角度を指定する)。
+   * true なら360°(可動範囲なしで回り続ける。脳は回る速さを指定する。車輪やタイヤに)
+   */
+  spin?: boolean;
 }
 
 export const SHAPES: readonly BlockShape[] = ['cube', 'sphere', 'cylinder'];
@@ -204,6 +209,7 @@ export function validate(bp: Blueprint): string[] {
     if (b.shape !== undefined && !SHAPES.includes(b.shape)) errors.push(`ブロック${i}の形が不正です:${b.shape}`);
     if (b.grip !== undefined && typeof b.grip !== 'boolean') errors.push(`ブロック${i}の摩擦の設定が不正です`);
     if (b.cylAxis !== undefined && (shapeOf(b) !== 'cylinder' || !(b.cylAxis in AXIS_DIR))) errors.push(`ブロック${i}の円柱の向きが不正です`);
+    if (b.spin !== undefined && (b.spin !== true || b.type !== 'joint')) errors.push(`360°回転は関節ブロックだけに使えます(ブロック${i})`);
     if (b.tire !== undefined && (b.tire !== true || b.type !== 'joint' || shapeOf(b) !== 'cylinder')) {
       errors.push(`タイヤモードは、円柱にした関節ブロックだけに使えます(ブロック${i})`);
     }
