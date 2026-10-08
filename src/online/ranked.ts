@@ -11,7 +11,7 @@
 import { battleFighter, canEnter, type Character } from '../core/character';
 import { characterToJson, parseCharacter } from '../core/codec';
 import type { RaceRecord } from '../core/ranked/run';
-import { SIM_VERSION } from '../core/config';
+import { RANKED, SIM_VERSION } from '../core/config';
 import {
   computeRatings,
   randomMatchSeed,
@@ -67,8 +67,16 @@ const scope = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '';
 const CACHE_KEY = `ranked-cache:${scope}`;
 const REPORTED_KEY = `ranked-reported:${scope}`;
 const entryDataKey = (id: number) => `ranked-entry-data:${scope}:${id}`;
-/** 結果を取り直すトーナメントの範囲(これより古いトーナメントの結果は確定しているとみなす) */
+/**
+ * 結果を取り直す範囲(トーナメントの数)。前回の取得より RESULT_WINDOW 回前のトーナメントから後をすべて取り直す
+ * (報告が遅れて届いたり、多数決が変わったりした結果も拾うため)。これより古い結果は確定しているとみなす
+ */
 const RESULT_WINDOW = 6;
+/**
+ * 保存の形式。上げると、すべての端末が次の取得で一度だけ全部を取り直す
+ * (2:前回の取得から時間があくと、その間のトーナメントの結果を取りこぼしていた不具合を直したので、取りこぼした端末を直す)
+ */
+const CACHE_VERSION = 2;
 
 export interface Player {
   id: string;
@@ -111,7 +119,7 @@ export interface RankedSnapshot {
 }
 
 interface Cache {
-  version: 1;
+  version: typeof CACHE_VERSION;
   versions: EntryVersion[];
   players: [string, string][];
   /** 取得済みのプレイヤーの更新時刻のうち、いちばん新しいもの */
@@ -123,7 +131,16 @@ interface Cache {
   needsSql?: boolean;
 }
 
-const emptyCache = (): Cache => ({ version: 1, versions: [], players: [], playersAt: '', results: [], randomMatches: [], randomResults: [], syncedAt: 0 });
+const emptyCache = (): Cache => ({
+  version: CACHE_VERSION,
+  versions: [],
+  players: [],
+  playersAt: '',
+  results: [],
+  randomMatches: [],
+  randomResults: [],
+  syncedAt: 0,
+});
 
 let cache: Cache | null = null;
 let loading: Promise<Cache> | null = null;
@@ -131,7 +148,7 @@ let loading: Promise<Cache> | null = null;
 async function loadCache(): Promise<Cache> {
   if (cache) return cache;
   loading ??= getSetting<Cache>(CACHE_KEY).then((c) => {
-    cache = c && c.version === 1 ? c : emptyCache();
+    cache = c && c.version === CACHE_VERSION ? c : emptyCache();
     return cache;
   });
   return loading;
@@ -212,8 +229,9 @@ async function doSync(): Promise<RankedSnapshot> {
     if (p.updated_at > playersAt) playersAt = p.updated_at;
   }
 
-  // トーナメントの結果:最近のトーナメントだけ取り直す(古いものは確定済み)
-  const since = c.results.length ? tournamentAt(Date.now()) - RESULT_WINDOW : 0;
+  // トーナメントの結果:前回の取得の少し前のトーナメントから後を、すべて取り直す(それより古いものは確定済み)。
+  // 「いまの少し前から」にすると、前回の取得から時間があいたとき、その間のトーナメントの結果を取りこぼしてしまう
+  const since = c.results.length && c.syncedAt ? tournamentAt(Math.min(c.syncedAt, Date.now())) - RESULT_WINDOW : 0;
   // サーバーの SQL が古い(版の列がない)ときは、前の形で取得する
   let needsSql = false;
   const resultQuery = (cols: string) =>
@@ -247,9 +265,11 @@ async function doSync(): Promise<RankedSnapshot> {
   );
   const randomMatches = [...c.randomMatches, ...matches.map(toMatch)];
 
-  // ランダムマッチの結果:まだ結果を持っていない試合のうち、いちばん古いものから後だけ
+  // ランダムマッチの結果:まだ結果を持っていない試合と、前回の取得の少し前より後にできた試合(報告が遅れて結果が変わることがある)のうち、
+  // いちばん古いものから後だけ
   const known = new Set(c.randomResults.map((r) => r.matchId));
-  const pendingIds = randomMatches.filter((m) => !known.has(m.id)).map((m) => m.id);
+  const recent = c.syncedAt - RESULT_WINDOW * RANKED.interval * 1000;
+  const pendingIds = randomMatches.filter((m) => !known.has(m.id) || m.createdAt >= recent).map((m) => m.id);
   let randomResults = c.randomResults;
   if (pendingIds.length > 0) {
     const fromId = Math.min(...pendingIds);
@@ -270,7 +290,17 @@ async function doSync(): Promise<RankedSnapshot> {
     randomResults = [...byId.values()].sort((x, y) => x.matchId - y.matchId);
   }
 
-  cache = { version: 1, versions, players: [...playerMap], playersAt, results: mergedResults, randomMatches, randomResults, syncedAt: Date.now(), needsSql };
+  cache = {
+    version: CACHE_VERSION,
+    versions,
+    players: [...playerMap],
+    playersAt,
+    results: mergedResults,
+    randomMatches,
+    randomResults,
+    syncedAt: Date.now(),
+    needsSql,
+  };
   return commit(cache);
 }
 
