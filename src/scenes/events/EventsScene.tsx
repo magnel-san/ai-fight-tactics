@@ -256,11 +256,24 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
         ) : mode === 'track' ? (
           <>
             <p className="muted small">
-              楕円のトラックを{TRACK.laps}周します(1周 約{Math.round(TRACK_LENGTH)}m)。トラックには1周に{TRACK.checkpoints}
-              個のチェックポイント(白い柱、黄色はスタート・ゴール)があり、
-              順番どおりに全部通らないと周回になりません。全員が同じトラックを走るので、ぶつかることもあります。制限時間 {TRACK.timeLimit}秒。
-              トレーニング「長距離(トラック)」で鍛えると、曲がりながら速く走れるようになります。
+              楕円のトラックを{TRACK.laps}周します(1周 約{Math.round(TRACK_LENGTH)}m・制限時間 {TRACK.timeLimit}秒)。1周に{TRACK.checkpoints}
+              個あるチェックポイントを、順番どおりに全部通らないと周回になりません(近道しても進みません)。全員が同じトラックを走るので、ぶつかることもあります。
             </p>
+            <ul className="cp-legend">
+              <li>
+                <span className="cp-dot" style={{ background: '#f2f2f2' }} />
+                まだ(黄色はゴール)
+              </li>
+              <li>
+                <span className="cp-dot" style={{ background: '#ff8c42' }} />
+                次に通る
+              </li>
+              <li>
+                <span className="cp-dot" style={{ background: '#4cd07d' }} />
+                この周で通った
+              </li>
+            </ul>
+            <p className="muted small">チェックポイントの色は、自分(いちばん上のキャラ)の進み具合です。</p>
             <div className="vs">
               <div className="vs-name">{character.name}(自分)</div>
               {runners.map((id, i) => (
@@ -271,24 +284,41 @@ export function EventsScene({ charId, character, entries, active, mode }: Props)
             </div>
             <div className="row">
               <button className="primary" disabled={!ready} onClick={startTrack}>
-                スタート
+                {track ? 'もう一度スタート' : 'スタート'}
               </button>
             </div>
             {track && (
               <div className="result">
                 <div className="result-title">{track.done ? '結果' : `${track.time.toFixed(0)} 秒`}</div>
-                <ol className="ranking">
+                <ol className="track-progress">
                   {track.names
                     .map((n, i) => ({ n, i }))
                     .sort((a, b) => track.result.rank[a.i] - track.result.rank[b.i])
-                    .map(({ n, i }) => (
-                      <li key={i}>
-                        {n}:
-                        {track.result.finishAt[i] !== null
-                          ? `ゴール ${track.result.finishAt[i]!.toFixed(1)}秒`
-                          : `${Math.min(TRACK.laps, track.result.laps[i] + 1)}周目・チェックポイント ${track.result.passed[i]}/${TRACK.laps * TRACK.checkpoints}`}
-                      </li>
-                    ))}
+                    .map(({ n, i }) => {
+                      const total = TRACK.laps * TRACK.checkpoints;
+                      const fin = track.result.finishAt[i];
+                      return (
+                        <li key={i} className={i === 0 ? 'mine' : ''}>
+                          <div className="track-progress-head">
+                            <span>
+                              {n}
+                              {i === 0 ? '(自分)' : ''}
+                            </span>
+                            <span className="muted">
+                              {fin !== null
+                                ? `ゴール ${fin.toFixed(1)}秒`
+                                : `${Math.min(TRACK.laps, track.result.laps[i] + 1)}周目 ${track.result.passed[i]}/${total}`}
+                            </span>
+                          </div>
+                          <div className="track-bar">
+                            <div style={{ width: `${(100 * track.result.passed[i]) / total}%` }} className={fin !== null ? 'done' : ''} />
+                            {Array.from({ length: TRACK.laps - 1 }, (_, l) => (
+                              <span key={l} className="lap-mark" style={{ left: `${(100 * (l + 1)) / TRACK.laps}%` }} />
+                            ))}
+                          </div>
+                        </li>
+                      );
+                    })}
                 </ol>
               </div>
             )}

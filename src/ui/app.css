@@ -25,7 +25,13 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'Hiragino Sans',
+    'Yu Gothic UI',
+    sans-serif;
   font-size: 14px;
 }
 
@@ -564,7 +570,10 @@ button.primary {
   width: 100%;
   height: 64px;
   margin-top: 8px;
-  font: 11px ui-monospace, Consolas, monospace;
+  font:
+    11px ui-monospace,
+    Consolas,
+    monospace;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -958,4 +967,166 @@ button.small-button {
 .report-card td.warn {
   color: var(--danger);
   font-weight: 600;
+}
+
+/* 長距離:チェックポイントの色の説明と、進み具合のバー */
+.cp-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 6px 0 2px;
+  padding: 0;
+  font-size: 12px;
+}
+.cp-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cp-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+}
+.track-progress {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.track-progress li.mine .track-progress-head span:first-child {
+  color: var(--accent);
+  font-weight: 700;
+}
+.track-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.track-bar {
+  position: relative;
+  height: 8px;
+  margin-top: 3px;
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.track-bar > div {
+  height: 100%;
+  background: #ff8c42;
+  transition: width 0.2s;
+}
+.track-bar > div.done {
+  background: var(--ok);
+}
+.track-bar .lap-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+
+/* キャラ作成:キーの表示・視点のボタン・キー操作の一覧・置く設定のまとめ・知らせ */
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--muted);
+  font:
+    11px/1.6 ui-monospace,
+    'Cascadia Mono',
+    Consolas,
+    monospace;
+  text-align: center;
+  vertical-align: middle;
+}
+h2 kbd,
+h3 kbd {
+  margin-left: 4px;
+}
+.view-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+}
+.view-tools button {
+  background: rgba(26, 32, 43, 0.85);
+  font-size: 12px;
+}
+.view-tools button.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.key-help {
+  position: absolute;
+  top: 48px;
+  right: 10px;
+  max-width: min(420px, calc(100% - 20px));
+  max-height: calc(100% - 110px);
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(18, 22, 31, 0.92);
+  font-size: 12px;
+}
+.key-help td {
+  padding: 3px 6px;
+  vertical-align: top;
+}
+.key-help td:first-child {
+  white-space: nowrap;
+}
+.toast {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid var(--accent);
+  font-size: 13px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.placement {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 220px);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(26, 32, 43, 0.85);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.chip.on {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.chip .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }

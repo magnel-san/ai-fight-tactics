@@ -206,6 +206,13 @@ export class EditorView {
     this.frame = requestAnimationFrame(this.loop);
   }
 
+  /** カメラを最初の位置(斜め前から見下ろす)に戻す */
+  resetCamera(): void {
+    this.camera.position.set(2.0, 1.6, 2.6);
+    this.controls.target.set(0, 0, 0);
+    this.controls.update();
+  }
+
   setBlueprint(bp: Blueprint): void {
     this.blueprint = bp;
     this.blocksGroup.clear();

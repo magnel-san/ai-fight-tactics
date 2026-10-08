@@ -49,9 +49,14 @@ export interface TrackResult {
 }
 
 const GROUND = 0x34503a;
+const INFIELD = 0x3f6b46;
 const TRACK_COLOR = 0xb5562f;
-const POLE = 0xf2f2f2;
+const WHITE = 0xf2f2f2;
+const BLACK = 0x222222;
 const FINISH = 0xf2c94c;
+/** チェックポイントの色:自分が通ったもの・次に通るもの */
+const PASSED = 0x4cd07d;
+const NEXT = 0xff8c42;
 
 export class TrackEpisode extends EpisodeBase {
   readonly props: EpisodeProps;
@@ -86,13 +91,20 @@ export class TrackEpisode extends EpisodeBase {
     this.passed = runners.map(() => 0);
     this.finishAt = runners.map(() => null);
     this.prevDist = this.fighters.map((f) => this.distToNext(f, 0));
-    this.props = { spheres: [], boxes: trackBoxes() };
+    this.props = { spheres: [], boxes: trackBoxes(this) };
   }
 
   private distToNext(f: Fighter, next: number): number {
     const p = f.position();
     const c = CHECKPOINTS[next];
     return Math.sqrt((p.x - c.x) ** 2 + (p.z - c.z) ** 2);
+  }
+
+  /** 自分(1人目)から見た、チェックポイント k の状態(この周で通った・次に通る・まだ)。ゴールしたら全部「通った」 */
+  checkpointState(k: number): 'passed' | 'next' | 'todo' {
+    if (this.finishAt[0] !== null) return 'passed';
+    const next = this.next[0];
+    return k === next ? 'next' : k < next ? 'passed' : 'todo';
   }
 
   /** i 番目のキャラの、次のチェックポイントの番号(0〜) */
@@ -184,41 +196,115 @@ export function trackRecordKey(r: TrackRecord): number {
   return r.time !== null ? r.time : TRACK.timeLimit + (TRACK.laps * TRACK.checkpoints - r.passed);
 }
 
-/** トラックの見た目:地面・トラック(板を並べる)・チェックポイントの柱(スタート・ゴールは黄色) */
-function trackBoxes(): EpisodeProps['boxes'] {
+/** トラックの見た目:地面・トラック・白線(両端の実線・レーンの破線・スタートの市松模様)・チェックポイントの柱と線 */
+function trackBoxes(ep: TrackEpisode): EpisodeProps['boxes'] {
   const boxes: EpisodeProps['boxes'] = [];
   const W = TRACK.width;
   const S = TRACK.straight;
   const R = TRACK.radius;
   boxes.push({ x: 0, y: -0.05, z: 0, hx: R + W + 3, hy: 0.05, hz: S / 2 + R + W + 3, color: GROUND });
-  // まっすぐな部分
-  for (const sx of [-1, 1]) boxes.push({ x: sx * R, y: 0.006, z: 0, hx: W / 2, hy: 0.006, hz: S / 2, color: TRACK_COLOR });
-  // 半円の部分:中心線に沿って板を並べる(外側ほど長くなるので、外側の長さに合わせる)
-  const n = 14;
-  const step = Math.PI / n;
-  for (const [cz, from] of [
-    [S / 2, 0],
-    [-S / 2, Math.PI],
-  ] as const) {
-    for (let k = 0; k < n; k++) {
-      const th = from + (k + 0.5) * step;
-      const half = (R + W / 2) * sin(step / 2) + 0.05;
-      // 板の長さの向き(ローカルの z)を、円の接線 (-sin θ, cos θ) に合わせる
-      const yaw = atan2(-sin(th), cos(th));
-      boxes.push({ x: R * cos(th), y: 0.006, z: cz + R * sin(th), hx: W / 2, hy: 0.006, hz: half, color: TRACK_COLOR, yaw });
+  // 内側の芝(トラックの内側を少し明るくする)
+  boxes.push({ x: 0, y: 0.002, z: 0, hx: R - W / 2, hy: 0.002, hz: S / 2, color: INFIELD });
+  for (const cz of [S / 2, -S / 2]) {
+    for (let k = 0; k < 24; k++) {
+      const th = (k + 0.5) * (Math.PI / 24) + (cz < 0 ? Math.PI : 0);
+      const r = (R - W / 2) / 2;
+      boxes.push({
+        x: r * cos(th),
+        y: 0.002,
+        z: cz + r * sin(th),
+        hx: r,
+        hy: 0.002,
+        hz: (R - W / 2) * sin(Math.PI / 48) + 0.02,
+        color: INFIELD,
+        yaw: atan2(-sin(th), cos(th)),
+      });
     }
   }
-  // チェックポイントの柱:トラックの両側に立てる
+  // トラック:中心線に沿って板を並べる(外側の長さに合わせ、すき間ができないようにする)
+  strip(boxes, 0, W / 2, 0.006, 96, TRACK_COLOR, () => true);
+  // 白線:両端は実線、レーンの境目は破線
+  const line = 0.05;
+  strip(boxes, -W / 2 + line, line, 0.016, 192, WHITE, () => true);
+  strip(boxes, W / 2 - line, line, 0.016, 192, WHITE, () => true);
+  for (let j = 1; j < TRACK.lanes; j++) strip(boxes, -W / 2 + (W * j) / TRACK.lanes, line * 0.7, 0.016, 192, WHITE, (k) => Math.floor(k / 3) % 2 === 0);
+  // スタート・ゴールの市松模様(ゴールのチェックポイントの線のすぐ手前)
+  const start = trackPoint(0);
+  const sq = W / 8;
+  for (let row = 0; row < 2; row++) {
+    for (let col = 0; col < 8; col++) {
+      const lat = -W / 2 + sq * (col + 0.5);
+      const back = -sq * 0.5 * (row + 0.5) - 0.1;
+      boxes.push({
+        x: start.x + start.tz * lat + start.tx * back,
+        y: 0.017,
+        z: start.z - start.tx * lat + start.tz * back,
+        hx: sq / 2,
+        hy: 0.004,
+        hz: sq / 4,
+        color: (row + col) % 2 === 0 ? WHITE : BLACK,
+        yaw: atan2(start.tx, start.tz),
+      });
+    }
+  }
+  // チェックポイント:両側の柱と、トラックを横切る線。自分(1人目)が通ったら緑、次に通るものはオレンジになる
   CHECKPOINTS.forEach((c, k) => {
-    const finish = k === CHECKPOINTS.length - 1;
+    const colorOf = () => {
+      const st = ep.checkpointState(k);
+      return st === 'passed' ? PASSED : st === 'next' ? NEXT : k === CHECKPOINTS.length - 1 ? FINISH : WHITE;
+    };
     for (const side of [-1, 1]) {
       const nx = c.tz * side;
       const nz = -c.tx * side;
-      boxes.push({ x: c.x + nx * (W / 2 + 0.15), y: 0.6, z: c.z + nz * (W / 2 + 0.15), hx: 0.07, hy: 0.6, hz: 0.07, color: finish ? FINISH : POLE });
+      boxes.push({ x: c.x + nx * (W / 2 + 0.15), y: 0.6, z: c.z + nz * (W / 2 + 0.15), hx: 0.07, hy: 0.6, hz: 0.07, color: WHITE, colorOf });
+      // 柱の上の旗
+      boxes.push({
+        x: c.x + nx * (W / 2 + 0.15) + c.tx * 0.18,
+        y: 1.08,
+        z: c.z + nz * (W / 2 + 0.15) + c.tz * 0.18,
+        hx: 0.02,
+        hy: 0.11,
+        hz: 0.18,
+        color: WHITE,
+        colorOf,
+        yaw: atan2(c.tx, c.tz),
+      });
     }
-    // 地面の線
-    const yaw = atan2(c.tz, -c.tx);
-    boxes.push({ x: c.x, y: 0.014, z: c.z, hx: W / 2, hy: 0.004, hz: 0.06, color: finish ? FINISH : POLE, opacity: 0.8, yaw });
+    // 板の長い向き(ローカルの x)をトラックの横方向に、薄い向き(ローカルの z)を進む向きに合わせる
+    boxes.push({ x: c.x, y: 0.02, z: c.z, hx: W / 2, hy: 0.005, hz: 0.07, color: WHITE, colorOf, yaw: atan2(c.tx, c.tz) });
   });
   return boxes;
+}
+
+/**
+ * 中心線から横に offset [m](外側が正)ずれた線に沿って、細い板を n 枚並べる(half は板の幅の半分)。
+ * keep(k) が false の板は置かない(破線にする)
+ */
+function strip(boxes: EpisodeProps['boxes'], offset: number, half: number, y: number, n: number, color: number, keep: (k: number) => boolean): void {
+  // 中心線の点を、横(外向き)にずらす。外向きは進む向き (tx, tz) を右に回した (tz, -tx)
+  const at = (s: number, o: number) => {
+    const p = trackPoint(s);
+    return { x: p.x + p.tz * o, z: p.z - p.tx * o };
+  };
+  for (let k = 0; k < n; k++) {
+    if (!keep(k)) continue;
+    const s0 = (k * TRACK_LENGTH) / n;
+    const s1 = ((k + 1) * TRACK_LENGTH) / n;
+    const a = at(s0, offset);
+    const b = at(s1, offset);
+    // 板の長さは、板の外側の端の長さに合わせる(曲がるところですき間ができないように)
+    const ao = at(s0, offset + half);
+    const bo = at(s1, offset + half);
+    const len = Math.max(Math.sqrt((b.x - a.x) ** 2 + (b.z - a.z) ** 2), Math.sqrt((bo.x - ao.x) ** 2 + (bo.z - ao.z) ** 2));
+    boxes.push({
+      x: (a.x + b.x) / 2,
+      y,
+      z: (a.z + b.z) / 2,
+      hx: half,
+      hy: y > 0.01 ? 0.004 : 0.006,
+      hz: len / 2 + 0.01,
+      color,
+      yaw: atan2(b.x - a.x, b.z - a.z),
+    });
+  }
 }

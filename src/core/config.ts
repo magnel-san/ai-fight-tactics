@@ -431,6 +431,8 @@ export const TRACK = {
   straight: 8,
   radius: 4,
   width: 4,
+  /** 見た目のレーンの数(白線の本数。走る位置は決めない) */
+  lanes: 4,
   checkpoints: 8,
   /** チェックポイントを通ったとみなす、トラックの中心線からの距離 [m] */
   checkpointRadius: 2.2,

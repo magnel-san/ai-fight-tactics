@@ -29,6 +29,8 @@ export class EpisodeViewer {
   private stageMesh: StageMesh | null = null;
   /** 種目の表示物(ボール・壁など) */
   private propMeshes: THREE.Mesh[] = [];
+  /** 色が変わる箱(チェックポイントなど)の材質と、色を決める関数 */
+  private dynamicBoxes: { material: THREE.MeshStandardMaterial; colorOf: () => number; last: number }[] = [];
   private sphereMeshes: {
     mesh: THREE.Mesh;
     body: { translation(): { x: number; y: number; z: number }; rotation(): { x: number; y: number; z: number; w: number } };
@@ -128,15 +130,39 @@ export class EpisodeViewer {
 
     this.floor.visible = !main.stage && !main.props;
     if (main.props) {
+      // 半透明の柵は、奥のものが透けて見えるよう深度を書かない
+      const material = (color: number, opacity?: number) =>
+        new THREE.MeshStandardMaterial({ color, transparent: opacity !== undefined, opacity: opacity ?? 1, depthWrite: opacity === undefined });
+      // 色が変わらない箱は、色と透明度ごとに1つにまとめて描く(白線など、細かい板をたくさん並べても重くならないように)
+      const groups = new Map<string, typeof main.props.boxes>();
       for (const b of main.props.boxes) {
-        const see = b.opacity !== undefined;
-        const mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(b.hx * 2, b.hy * 2, b.hz * 2),
-          // 半透明の柵は、奥のものが透けて見えるよう深度を書かない
-          new THREE.MeshStandardMaterial({ color: b.color, transparent: see, opacity: b.opacity ?? 1, depthWrite: !see }),
-        );
-        mesh.position.set(b.x, b.y, b.z);
-        mesh.rotation.y = b.yaw ?? 0;
+        if (b.colorOf) {
+          const m = material(b.colorOf(), b.opacity);
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.hx * 2, b.hy * 2, b.hz * 2), m);
+          mesh.position.set(b.x, b.y, b.z);
+          mesh.rotation.y = b.yaw ?? 0;
+          mesh.receiveShadow = true;
+          this.scene.add(mesh);
+          this.propMeshes.push(mesh);
+          this.dynamicBoxes.push({ material: m, colorOf: b.colorOf, last: b.colorOf() });
+          continue;
+        }
+        const key = `${b.color}:${b.opacity ?? ''}`;
+        const list = groups.get(key);
+        if (list) list.push(b);
+        else groups.set(key, [b]);
+      }
+      const matrix = new THREE.Matrix4();
+      const quat = new THREE.Quaternion();
+      const up = new THREE.Vector3(0, 1, 0);
+      for (const list of groups.values()) {
+        const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), material(list[0].color, list[0].opacity), list.length);
+        list.forEach((b, i) => {
+          quat.setFromAxisAngle(up, b.yaw ?? 0);
+          matrix.compose(new THREE.Vector3(b.x, b.y, b.z), quat, new THREE.Vector3(b.hx * 2, b.hy * 2, b.hz * 2));
+          mesh.setMatrixAt(i, matrix);
+        });
+        mesh.computeBoundingSphere();
         mesh.receiveShadow = true;
         this.scene.add(mesh);
         this.propMeshes.push(mesh);
@@ -226,6 +252,7 @@ export class EpisodeViewer {
       (m.material as THREE.Material).dispose();
     }
     this.propMeshes = [];
+    this.dynamicBoxes = [];
     this.sphereMeshes = [];
   }
 
@@ -235,6 +262,13 @@ export class EpisodeViewer {
       s.meshes.forEach((m, i) => syncCreatureMesh(s.episode.fighters[i].creature, m));
     }
     this.stageMesh?.update();
+    for (const d of this.dynamicBoxes) {
+      const c = d.colorOf();
+      if (c !== d.last) {
+        d.material.color.setHex(c);
+        d.last = c;
+      }
+    }
     for (const s of this.sphereMeshes) {
       const t = s.body.translation();
       const r = s.body.rotation();

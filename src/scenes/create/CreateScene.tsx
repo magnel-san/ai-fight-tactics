@@ -92,6 +92,79 @@ const dirLabel = (f: Face) => PISTON_DIRS.find((d) => d.dir === f)?.label ?? f;
 /** 取り消しの最大段数 */
 const HISTORY_LIMIT = 100;
 
+/** キー操作の一覧(画面の「キー操作」とヘルプに出す) */
+const KEY_HELP: { keys: string; text: string }[] = [
+  { keys: '左クリック', text: '面にブロックを置く' },
+  { keys: '右クリック', text: 'ブロックを選択(Esc で解除)' },
+  { keys: '右ドラッグ / ホイール', text: '回転 / ズーム(中ボタンのドラッグで移動)' },
+  { keys: `1〜${PALETTE.length}`, text: '置くブロックの種類' },
+  { keys: 'Q', text: '形を切り替え(立方体 → 球 → 円柱)' },
+  { keys: 'C', text: '円柱の向きを切り替え' },
+  { keys: 'G', text: '摩擦オン / オフ' },
+  { keys: 'A', text: '関節の回転軸を切り替え(置くとき)' },
+  { keys: 'S', text: '関節の 180° / 360° を切り替え' },
+  { keys: 'T', text: 'タイヤモード(円柱の関節)' },
+  { keys: 'D', text: 'ピストン・風の向きを切り替え' },
+  { keys: 'M', text: '左右対称モード オン / オフ' },
+  { keys: 'E', text: 'スポイト:マウスの下(または選択中)のブロックの設定をまねる' },
+  { keys: 'R', text: '選択中(またはマウスの下)の関節の軸を回す' },
+  { keys: 'Delete', text: '選択中(またはマウスの下)のブロックとその先を削除' },
+  { keys: 'Ctrl+Z / Ctrl+Y', text: '取り消し / やり直し' },
+  { keys: 'F', text: 'カメラを元の位置に戻す' },
+  { keys: 'H', text: 'この一覧を表示 / 非表示' },
+];
+
+const SHAPE_ORDER: BlockShape[] = ['cube', 'sphere', 'cylinder'];
+const cycle = <T,>(list: readonly T[], cur: T): T => list[(list.indexOf(cur) + 1) % list.length];
+
+/** 置くブロックの設定(ブラウザに保存して、次に開いたときも同じ設定で始める) */
+interface Placement {
+  type: Exclude<BlockType, 'core'>;
+  axis: Axis;
+  pistonDir: Face | 'face';
+  symmetric: boolean;
+  shape: BlockShape;
+  grip: boolean;
+  cylAxis: Axis | 'auto';
+  tire: boolean;
+  spin: boolean;
+}
+const PLACEMENT_KEY = 'create-placement';
+const DEFAULT_PLACEMENT: Placement = {
+  type: 'base',
+  axis: 'x',
+  pistonDir: 'face',
+  symmetric: true,
+  shape: 'cube',
+  grip: false,
+  cylAxis: 'auto',
+  tire: false,
+  spin: false,
+};
+function loadPlacement(): Placement {
+  try {
+    const raw = localStorage.getItem(PLACEMENT_KEY);
+    if (!raw) return DEFAULT_PLACEMENT;
+    const p = { ...DEFAULT_PLACEMENT, ...(JSON.parse(raw) as Partial<Placement>) };
+    // 保存した値が今の選択肢にないときは、初期値に戻す
+    if (!PALETTE.some((x) => x.type === p.type)) p.type = DEFAULT_PLACEMENT.type;
+    if (!SHAPE_ORDER.includes(p.shape)) p.shape = DEFAULT_PLACEMENT.shape;
+    if (!AXES.some((a) => a.axis === p.axis)) p.axis = DEFAULT_PLACEMENT.axis;
+    if (!CYL_AXES.some((a) => a.axis === p.cylAxis)) p.cylAxis = DEFAULT_PLACEMENT.cylAxis;
+    if (!PISTON_DIRS.some((d) => d.dir === p.pistonDir)) p.pistonDir = DEFAULT_PLACEMENT.pistonDir;
+    return p;
+  } catch {
+    return DEFAULT_PLACEMENT;
+  }
+}
+function savePlacement(p: Placement): void {
+  try {
+    localStorage.setItem(PLACEMENT_KEY, JSON.stringify(p));
+  } catch {
+    // 保存できなくても(プライベートブラウズなど)、そのまま使える
+  }
+}
+
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
 interface Props {
@@ -104,19 +177,36 @@ interface Props {
 export function CreateScene({ blueprint, onChange, active }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const [type, setType] = useState<Exclude<BlockType, 'core'>>('base');
-  const [axis, setAxis] = useState<Axis>('x');
+  const [initial] = useState(loadPlacement);
+  const [type, setType] = useState<Exclude<BlockType, 'core'>>(initial.type);
+  const [axis, setAxis] = useState<Axis>(initial.axis);
   /** 置くピストンの伸びる向き('face' = 付けた面の向き) */
-  const [pistonDir, setPistonDirChoice] = useState<Face | 'face'>('face');
-  const [symmetric, setSymmetric] = useState(true);
+  const [pistonDir, setPistonDirChoice] = useState<Face | 'face'>(initial.pistonDir);
+  const [symmetric, setSymmetric] = useState(initial.symmetric);
   /** 置くブロックの形と摩擦 */
-  const [shape, setShape] = useState<BlockShape>('cube');
-  const [grip, setGrip] = useState(false);
+  const [shape, setShape] = useState<BlockShape>(initial.shape);
+  const [grip, setGrip] = useState(initial.grip);
   /** 置く円柱の軸の向きと、タイヤモード(円柱の関節だけ) */
-  const [cylAxis, setCylAxis] = useState<Axis | 'auto'>('auto');
-  const [tire, setTire] = useState(false);
+  const [cylAxis, setCylAxis] = useState<Axis | 'auto'>(initial.cylAxis);
+  const [tire, setTire] = useState(initial.tire);
   /** 置く関節の回り方(false = 180°、true = 360°) */
-  const [spin, setSpin] = useState(false);
+  const [spin, setSpin] = useState(initial.spin);
+  /** キー操作の一覧を表示するか */
+  const [showKeys, setShowKeys] = useState(false);
+  /** キーで設定を変えたときに、画面に一瞬出す知らせ */
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+  const notify = useCallback((text: string) => {
+    setToast(text);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 1400);
+  }, []);
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+  // 置く設定はブラウザに保存する
+  useEffect(
+    () => savePlacement({ type, axis, pistonDir, symmetric, shape, grip, cylAxis, tire, spin }),
+    [type, axis, pistonDir, symmetric, shape, grip, cylAxis, tire, spin],
+  );
   const [hovered, setHovered] = useState<number | null>(null);
   /** 右クリックで選んだブロック */
   const [selected, setSelected] = useState<number | null>(null);
@@ -134,8 +224,8 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
     tire: shape === 'cylinder' && type === 'joint' && tire,
     spin: type === 'joint' && spin,
   };
-  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir, look });
-  latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir, look };
+  const latest = useRef({ blueprint, type, axis, symmetric, hovered, selected, pistonDir, look, shape, cylAxis, spin, grip, tire });
+  latest.current = { blueprint, type, axis, symmetric, hovered, selected, pistonDir, look, shape, cylAxis, spin, grip, tire };
 
   const commit = useCallback(
     (result: EditResult) => {
@@ -210,8 +300,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
-      const { blueprint: bp, symmetric: sym, hovered, selected: sel } = latest.current;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+      const cur = latest.current;
+      const { blueprint: bp, symmetric: sym, hovered, selected: sel } = cur;
       // 操作の対象は、選択中のブロック(なければマウスの下のブロック)
       const h = sel ?? hovered;
       const key = e.key.toLowerCase();
@@ -228,16 +319,78 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         setSelected(null);
       } else if (e.key === 'Escape') {
         setSelected(null);
+      } else if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
       } else if (key === 'r' && h !== null && bp.blocks[h]?.type === 'joint') {
         const next = NEXT_AXIS[bp.blocks[h].axis!];
         commit(sym ? setJointAxisSymmetric(bp, h, next) : setJointAxis(bp, h, next));
-      } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= PALETTE.length && !e.ctrlKey && !e.metaKey) {
-        setType(PALETTE[Number(e.key) - 1].type);
+        notify(`関節の軸:${next.toUpperCase()}`);
+      } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= PALETTE.length) {
+        const p = PALETTE[Number(e.key) - 1];
+        setType(p.type);
+        notify(`ブロック:${p.label}`);
+      } else if (key === 'q') {
+        const next = cycle(SHAPE_ORDER, cur.shape);
+        setShape(next);
+        notify(`形:${SHAPE_LABELS.find((x) => x.shape === next)!.label}`);
+      } else if (key === 'c') {
+        const next = cycle(
+          CYL_AXES.map((x) => x.axis),
+          cur.cylAxis,
+        );
+        setCylAxis(next);
+        setShape('cylinder');
+        notify(`円柱の向き:${CYL_AXES.find((x) => x.axis === next)!.label}`);
+      } else if (key === 'g') {
+        setGrip(!cur.grip);
+        notify(`摩擦:${!cur.grip ? 'オン' : 'オフ'}`);
+      } else if (key === 'a') {
+        const next = NEXT_AXIS[cur.axis];
+        setAxis(next);
+        notify(`置く関節の回転軸:${AXES.find((x) => x.axis === next)!.label}`);
+      } else if (key === 's') {
+        setSpin(!cur.spin);
+        notify(`関節の回り方:${!cur.spin ? '360°(回転)' : '180°(角度)'}`);
+      } else if (key === 't') {
+        setTire(!cur.tire);
+        notify(`タイヤモード:${!cur.tire ? 'オン(円柱の関節に付く)' : 'オフ'}`);
+      } else if (key === 'd') {
+        const next = cycle(
+          PISTON_DIRS.map((d) => d.dir),
+          cur.pistonDir,
+        );
+        setPistonDirChoice(next);
+        notify(`ピストン・風の向き:${PISTON_DIRS.find((d) => d.dir === next)!.label}`);
+      } else if (key === 'm') {
+        setSymmetric(!sym);
+        notify(`左右対称モード:${!sym ? 'オン' : 'オフ'}`);
+      } else if (key === 'e') {
+        // スポイト:ブロックの設定をまねる
+        const b = h !== null ? bp.blocks[h] : undefined;
+        if (!b || b.type === 'core') {
+          notify('まねるブロックにマウスを合わせてください');
+          return;
+        }
+        setType(b.type);
+        setShape(shapeOf(b));
+        setGrip(!!b.grip);
+        setCylAxis(b.cylAxis ?? 'auto');
+        setTire(!!b.tire);
+        if (b.type === 'joint') {
+          setAxis(b.axis!);
+          setSpin(!!b.spin);
+        }
+        if (b.type === 'piston' || b.type === 'wind') setPistonDirChoice(pistonDirection(b));
+        notify(`スポイト:${PALETTE.find((p) => p.type === b.type)?.label}の設定をまねました`);
+      } else if (key === 'f') {
+        viewRef.current?.resetCamera();
+      } else if (key === 'h' || e.key === '?') {
+        setShowKeys((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, commit, undo, redo]);
+  }, [active, commit, undo, redo, notify]);
 
   const replaceAll = (bp: Blueprint) => commit({ ok: true, blueprint: bp, notes: [] });
 
@@ -256,7 +409,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
   return (
     <div className="create">
       <aside className="panel">
-        <h2>ブロック</h2>
+        <h2>
+          置くブロック <kbd>1〜{PALETTE.length}</kbd>
+        </h2>
         <div className="palette">
           {PALETTE.map((p, i) => (
             <button key={p.type} className={`block-button${type === p.type ? ' selected' : ''}`} onClick={() => setType(p.type)} title={p.note}>
@@ -269,7 +424,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           ))}
         </div>
 
-        <h3>形</h3>
+        <h3>
+          形 <kbd>Q</kbd>
+        </h3>
         <div className="segmented">
           {SHAPE_LABELS.map((x) => (
             <button key={x.shape} className={shape === x.shape ? 'selected' : ''} onClick={() => setShape(x.shape)} title={x.note}>
@@ -279,7 +436,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
         </div>
         {shape === 'cylinder' && (
           <>
-            <h3>円柱の向き</h3>
+            <h3>
+              円柱の向き <kbd>C</kbd>
+            </h3>
             <div className="segmented">
               {CYL_AXES.map((x) => (
                 <button key={x.axis} className={cylAxis === x.axis ? 'selected' : ''} onClick={() => setCylAxis(x.axis)} title={CYL_AXIS_NOTE}>
@@ -290,19 +449,21 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
             {type === 'joint' && (
               <label className="toggle" title={TIRE_NOTE}>
                 <input type="checkbox" checked={tire} onChange={(e) => setTire(e.target.checked)} />
-                タイヤモード(半径{BLOCK_OPTIONS.tireRadiusScale}倍・コスト+{BLOCK_OPTIONS.tireCost})
+                タイヤモード(半径{BLOCK_OPTIONS.tireRadiusScale}倍・コスト+{BLOCK_OPTIONS.tireCost}) <kbd>T</kbd>
               </label>
             )}
           </>
         )}
         <label className="toggle" title={`摩擦が大きく、踏ん張れる・滑りにくい(コスト+${BLOCK_OPTIONS.gripCost})`}>
           <input type="checkbox" checked={grip} onChange={(e) => setGrip(e.target.checked)} />
-          摩擦オン(コスト+{BLOCK_OPTIONS.gripCost})
+          摩擦オン(コスト+{BLOCK_OPTIONS.gripCost}) <kbd>G</kbd>
         </label>
 
         {type === 'joint' && (
           <>
-            <h3>関節の回転軸</h3>
+            <h3>
+              関節の回転軸 <kbd>A</kbd>
+            </h3>
             <div className="segmented">
               {AXES.map((a) => (
                 <button key={a.axis} className={axis === a.axis ? 'selected' : ''} onClick={() => setAxis(a.axis)}>
@@ -310,7 +471,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
                 </button>
               ))}
             </div>
-            <h3>関節の回り方</h3>
+            <h3>
+              関節の回り方 <kbd>S</kbd>
+            </h3>
             <div className="segmented">
               {SPIN_MODES.map((m) => (
                 <button key={String(m.spin)} className={spin === m.spin ? 'selected' : ''} onClick={() => setSpin(m.spin)} title={m.note}>
@@ -323,7 +486,9 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
 
         {(type === 'piston' || type === 'wind') && (
           <>
-            <h3>{type === 'piston' ? 'ピストンの伸びる向き' : '風の吹く向き'}</h3>
+            <h3>
+              {type === 'piston' ? 'ピストンの伸びる向き' : '風の吹く向き'} <kbd>D</kbd>
+            </h3>
             <div className="segmented wrap">
               {PISTON_DIRS.map((d) => (
                 <button key={d.dir} className={pistonDir === d.dir ? 'selected' : ''} onClick={() => setPistonDirChoice(d.dir)} title={d.note}>
@@ -341,7 +506,7 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
 
         <label className="toggle">
           <input type="checkbox" checked={symmetric} onChange={(e) => setSymmetric(e.target.checked)} />
-          左右対称モード
+          左右対称モード <kbd>M</kbd>
         </label>
 
         <h2>選択中のブロック</h2>
@@ -516,25 +681,89 @@ export function CreateScene({ blueprint, onChange, active }: Props) {
           <button onClick={() => replaceAll(QUADRUPED)}>サンプル(4本脚)</button>
         </div>
 
-        <h3>操作</h3>
-        <ul className="help">
-          <li>左クリック:面にブロックを置く</li>
-          <li>右ドラッグ:回転 / ホイール:ズーム</li>
-          <li>右クリック:ブロックを選択(Esc で解除)</li>
-          <li>Delete:選択中のブロックとその先を削除(選択がなければマウスの下のブロック)</li>
-          <li>R:選択中(またはマウスの下)の関節の軸を切り替え</li>
-          <li>Ctrl+Z / Ctrl+Y:取り消し / やり直し</li>
-          <li>1〜{PALETTE.length}:ブロックの種類を選ぶ</li>
-        </ul>
+        <p className="muted small">
+          キー操作の一覧は、3D表示の右上の「キー操作」か <kbd>H</kbd> で表示します。置く設定はこのブラウザに保存され、次に開いたときも同じ設定で始まります。
+        </p>
       </aside>
 
       <div className="viewport">
         <canvas ref={canvasRef} />
+        <div className="view-tools">
+          <button onClick={() => viewRef.current?.resetCamera()} title="カメラを元の位置に戻す(F)">
+            視点を戻す
+          </button>
+          <button className={showKeys ? 'selected' : ''} onClick={() => setShowKeys((v) => !v)} title="キー操作の一覧(H)">
+            キー操作
+          </button>
+        </div>
+        {showKeys && (
+          <div className="key-help">
+            <table>
+              <tbody>
+                {KEY_HELP.map((k) => (
+                  <tr key={k.keys}>
+                    <td>
+                      <kbd>{k.keys}</kbd>
+                    </td>
+                    <td>{k.text}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {toast && <div className="toast">{toast}</div>}
+        <div className="placement">
+          <span className="chip" title="置くブロック(1〜7)">
+            <span className="swatch" style={{ background: hex(BLOCK_COLORS[type]) }} />
+            {PALETTE.find((p) => p.type === type)?.label}
+          </span>
+          <button className="chip" onClick={() => setShape(cycle(SHAPE_ORDER, shape))} title="形(Q)">
+            {SHAPE_LABELS.find((x) => x.shape === shape)?.label}
+            {shape === 'cylinder' && `・${CYL_AXES.find((x) => x.axis === cylAxis)?.label}`}
+          </button>
+          {type === 'joint' && (
+            <>
+              <button className="chip" onClick={() => setAxis(NEXT_AXIS[axis])} title="関節の回転軸(A)">
+                軸 {axis.toUpperCase()}
+              </button>
+              <button className="chip" onClick={() => setSpin(!spin)} title="関節の回り方(S)">
+                {spin ? '360°' : '180°'}
+              </button>
+              {shape === 'cylinder' && tire && <span className="chip">タイヤ</span>}
+            </>
+          )}
+          {(type === 'piston' || type === 'wind') && (
+            <button
+              className="chip"
+              onClick={() =>
+                setPistonDirChoice(
+                  cycle(
+                    PISTON_DIRS.map((d) => d.dir),
+                    pistonDir,
+                  ),
+                )
+              }
+              title="ピストン・風の向き(D)"
+            >
+              向き:{PISTON_DIRS.find((d) => d.dir === pistonDir)?.label}
+            </button>
+          )}
+          <button className={`chip${grip ? ' on' : ''}`} onClick={() => setGrip(!grip)} title="摩擦オン(G)">
+            摩擦{grip ? 'オン' : 'オフ'}
+          </button>
+          <button className={`chip${symmetric ? ' on' : ''}`} onClick={() => setSymmetric(!symmetric)} title="左右対称モード(M)">
+            左右対称{symmetric ? 'オン' : 'オフ'}
+          </button>
+        </div>
         <div className="hud">
           {hoveredBlock ? (
             <>
               {hoveredBlock.type === 'core' ? 'コア(黒い印と床の黄色い矢印が正面)' : PALETTE.find((p) => p.type === hoveredBlock.type)?.label}
-              {hoveredBlock.type === 'joint' && `・軸 ${hoveredBlock.axis!.toUpperCase()}`}
+              {hoveredBlock.type === 'joint' && `・軸 ${hoveredBlock.axis!.toUpperCase()}・${hoveredBlock.spin ? '360°' : '180°'}`}
+              {(hoveredBlock.type === 'piston' || hoveredBlock.type === 'wind') && `・${dirLabel(pistonDirection(hoveredBlock))}向き`}
+              {`・${BLOCKS[hoveredBlock.type].mass}kg`}
+              {hoveredBlock.type !== 'core' && <span className="muted">(E でこの設定をまねる)</span>}
             </>
           ) : (
             'ブロックの面にマウスを合わせてください'

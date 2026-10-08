@@ -182,6 +182,15 @@ describe('長距離(トラック)', () => {
     put(1);
     expect(ep.result().passed[0]).toBe(2);
     expect(ep.nextCheckpoint(0)).toBe(2);
+    // 通ったチェックポイントは「通った」、次は「次」、その先は「まだ」になり、柱や線の色もそれに合わせて変わる
+    expect([0, 1, 2, 3].map((k) => ep.checkpointState(k))).toEqual(['passed', 'passed', 'next', 'todo']);
+    const colored = ep.props.boxes.filter((b) => b.colorOf);
+    expect(colored.length).toBe(CHECKPOINTS.length * 5); // 柱2本・旗2枚・線1本
+    const colorsOf = (k: number) => new Set(colored.slice(k * 5, k * 5 + 5).map((b) => b.colorOf!()));
+    expect(colorsOf(0)).toEqual(colorsOf(1));
+    expect(colorsOf(0)).not.toEqual(colorsOf(2));
+    expect(colorsOf(2)).not.toEqual(colorsOf(3));
+    expect(colorsOf(0).size).toBe(1);
     ep.free();
   });
 
