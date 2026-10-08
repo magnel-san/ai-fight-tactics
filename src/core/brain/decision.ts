@@ -1,7 +1,7 @@
 // 判断脳(仕様書セクション7)。体に依存せず、「どの方向へどの速さで進むか」を決めて運動脳に指令する。
-// 入力81:周囲タイル61(4周分)・自分3・相手7・安全円5・時間1・相手との接触4。
+// 入力102:周囲タイル61(4周分)・自分3・相手7・安全円5・時間1・相手との接触4・相手の向きと体の形9・体の傾きと回転12。
 // 出力4:進む方向(コア基準の水平2成分)・速さ・ジャンプ指令(0より大きければ跳ぶ)。
-import { BATTLE, BRAIN, STAGE } from '../config';
+import { BATTLE, BLOCKS, BRAIN, CREATURE, STAGE } from '../config';
 import type { Rng } from '../math/rng';
 import type { Fighter } from '../sim/fighter';
 import { rotate } from '../math/quat';
@@ -67,6 +67,44 @@ export function nearestBlockDistance(a: Fighter, b: Fighter): number {
     }
   }
   return Math.sqrt(best);
+}
+
+/** 体の重さの合計 [kg](設計図のブロックの重さを足したもの) */
+export function bodyMass(f: Fighter): number {
+  let m = 0;
+  for (const b of f.creature.blueprint.blocks) m += BLOCKS[b.type].mass;
+  return m;
+}
+
+/**
+ * 体の形:コアから見て、(ux, uz) の向き・その反対・両横へ、体がどこまで伸びているか [m] と、体の高さ [m]。
+ * 横は、(ux, uz) と反対向きに立って見たときのコアの +x 側(side)と -x 側(otherSide)
+ */
+export function bodyShape(f: Fighter, ux: number, uz: number): { toward: number; away: number; side: number; otherSide: number; height: number } {
+  const q = f.position();
+  // (ux, uz) の反対を正面とするコアの +x は (-uz, ux)(Fighter.heading と同じ決まり)
+  const sx = -uz;
+  const sz = ux;
+  let toward = 0;
+  let away = 0;
+  let side = 0;
+  let otherSide = 0;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const b of blockWorldPositions(f)) {
+    const dx = b.x - q.x;
+    const dz = b.z - q.z;
+    const a = dx * ux + dz * uz;
+    const s = dx * sx + dz * sz;
+    toward = Math.max(toward, a);
+    away = Math.max(away, -a);
+    side = Math.max(side, s);
+    otherSide = Math.max(otherSide, -s);
+    minY = Math.min(minY, b.y);
+    maxY = Math.max(maxY, b.y);
+  }
+  const half = CREATURE.blockSize / 2;
+  return { toward: toward + half, away: away + half, side: side + half, otherSide: otherSide + half, height: maxY - minY + CREATURE.blockSize };
 }
 
 /** 相手の周り(自分のマスと隣の6マス)で、いちばん危ないところの危険度(穴なら1)。崖っぷちにいる相手ほど大きい */
@@ -154,6 +192,58 @@ export function decisionInputs(ctx: DecisionContext, x: Float64Array): void {
     x[k++] = edgeDanger(stage, opponent);
   } else {
     for (let i = 0; i < 4; i++) x[k++] = 0;
+  }
+
+  // 相手の向きと体の形:相手の正面の向き(自分の向き基準)・こちらを向いているか・重さの比べ・
+  // 体がこちら側・反対側・両横へどこまで伸びているか・体の高さ(相手がいなければ 0)
+  if (opponent && !opponent.out) {
+    const q = opponent.position();
+    const oh = opponent.heading();
+    // 相手から自分への向き(重なっているときは、自分の正面の反対)
+    let ux = p.x - q.x;
+    let uz = p.z - q.z;
+    const ud = Math.sqrt(ux * ux + uz * uz);
+    if (ud > 1e-9) {
+      ux /= ud;
+      uz /= ud;
+    } else {
+      ux = -h.fx;
+      uz = -h.fz;
+    }
+    const [ofx, ofz] = local(oh.fx, oh.fz);
+    x[k++] = ofx;
+    x[k++] = ofz;
+    x[k++] = oh.fx * ux + oh.fz * uz;
+    const sm = bodyMass(self);
+    const om = bodyMass(opponent);
+    x[k++] = (om - sm) / (om + sm);
+    const s = bodyShape(opponent, ux, uz);
+    x[k++] = s.toward / BRAIN.decisionShapeScale;
+    x[k++] = s.away / BRAIN.decisionShapeScale;
+    x[k++] = s.side / BRAIN.decisionShapeScale;
+    x[k++] = s.otherSide / BRAIN.decisionShapeScale;
+    x[k++] = s.height / BRAIN.decisionShapeScale;
+  } else {
+    for (let i = 0; i < 9; i++) x[k++] = 0;
+  }
+
+  // 体の傾きと回転:自分と相手のコアの上が向いている方向(まっすぐ立っていれば (0, 1, 0)、ひっくり返ると上下が -1)と、
+  // 回転の速さ(角速度)。どちらも自分の向き基準(コアの +x・真上・正面)に直す(相手がいなければ 0)
+  for (const f of [self, opponent]) {
+    if (f && !f.out) {
+      const [ux, uy, uz] = rotate(f.core.rotation(), 0, 1, 0);
+      const [lux, luz] = local(ux, uz);
+      x[k++] = lux;
+      x[k++] = uy;
+      x[k++] = luz;
+      const w = f.core.angvel();
+      const [lwx, lwz] = local(w.x, w.z);
+      x[k++] = lwx / BRAIN.angvelScale;
+      x[k++] = w.y / BRAIN.angvelScale;
+      x[k++] = lwz / BRAIN.angvelScale;
+    } else {
+      for (let i = 0; i < 6; i++) x[k++] = 0;
+    }
   }
 }
 

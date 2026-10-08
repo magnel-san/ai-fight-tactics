@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { decisionGenomeLength, decisionInputs, EYE_OFFSETS } from '../src/core/brain/decision';
+import { bodyShape, decisionGenomeLength, decisionInputs, EYE_OFFSETS } from '../src/core/brain/decision';
 import { createMotorGenome } from '../src/core/brain/motor';
 import { BRAIN, STAGE } from '../src/core/config';
 import { QUADRUPED } from '../src/core/creature/samples';
@@ -190,7 +190,7 @@ describe('判断脳の入力と試合', () => {
     R = await initRapier();
   });
 
-  it('目は4周61点、入力は81個', () => {
+  it('目は4周61点、入力は102個', () => {
     expect(EYE_OFFSETS.length).toBe(61);
     const world = new R.World({ x: 0, y: -9.81, z: 0 });
     const stage = new Stage(R, world, 1, { rules: true });
@@ -198,6 +198,37 @@ describe('判断脳の入力と試合', () => {
     const x = new Float64Array(BRAIN.decisionInputs).fill(NaN);
     decisionInputs({ self: f, opponent: null, stage, time: 0 }, x);
     for (const v of x) expect(Number.isFinite(v)).toBe(true);
+    world.free();
+  });
+
+  it('相手の向き・体の形・体の傾きを入力に入れる', () => {
+    expect(BRAIN.decisionInputs).toBe(102);
+    const world = new R.World({ x: 0, y: -9.81, z: 0 });
+    const stage = new Stage(R, world, 1, { rules: true });
+    const motor = () => createMotorGenome(4, new Rng(1));
+    // 自分は +z を向き、相手は 3m 前でこちら(-z)を向いている
+    const me = new Fighter(R, world, QUADRUPED, motor(), { position: { x: 0, y: 1, z: 0 }, yaw: 0 });
+    const opp = new Fighter(R, world, QUADRUPED, motor(), { position: { x: 0, y: 1, z: 3 }, yaw: Math.PI });
+    const x = new Float64Array(BRAIN.decisionInputs);
+    decisionInputs({ self: me, opponent: opp, stage, time: 0 }, x);
+    const k = 61 + 3 + 7 + 5 + 1 + 4;
+    expect(x[k]).toBeCloseTo(0, 5); // 相手の正面の向き(自分の +x 成分)
+    expect(x[k + 1]).toBeCloseTo(-1, 5); // 相手の正面の向き(自分の正面成分):こちら向き
+    expect(x[k + 2]).toBeCloseTo(1, 5); // こちらを向いている
+    expect(x[k + 3]).toBe(0); // 同じ体なので重さは同じ
+    for (let i = 4; i < 9; i++) expect(x[k + i]).toBeGreaterThan(0); // 体の伸び・高さ
+    // 体の形は「相手から自分への向き」(0, -1) を基準に測る。反対側への伸びは、反対の向きから見たときのこちら側への伸びと同じ
+    const s = bodyShape(opp, 0, -1);
+    expect(s.side).toBeCloseTo(x[k + 6] * BRAIN.decisionShapeScale, 5);
+    expect(bodyShape(opp, 0, 1).toward).toBeCloseTo(x[k + 5] * BRAIN.decisionShapeScale, 5);
+    // まっすぐ立っているので、自分も相手もコアの上は真上(0, 1, 0)、回転していない
+    expect([x[k + 9], x[k + 10], x[k + 11]].map((v) => +v.toFixed(5))).toEqual([0, 1, 0]);
+    expect([x[k + 15], x[k + 16], x[k + 17]].map((v) => +v.toFixed(5))).toEqual([0, 1, 0]);
+    // 相手がいなければ、相手の分は 0
+    decisionInputs({ self: me, opponent: null, stage, time: 0 }, x);
+    for (let i = 0; i < 9; i++) expect(x[k + i]).toBe(0);
+    for (let i = 15; i < 21; i++) expect(x[k + i]).toBe(0);
+    expect(x[k + 10]).toBeCloseTo(1, 5);
     world.free();
   });
 

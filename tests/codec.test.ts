@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDecisionGenome } from '../src/core/brain/decision';
 import { createMotorGenome } from '../src/core/brain/motor';
 import { newCharacter } from '../src/core/character';
-import { base64ToBytes, bytesToBase64, characterToJson, decodeWeights, encodeWeights, parseCharacter } from '../src/core/codec';
+import { base64ToBytes, bytesToBase64, characterToJson, decodeWeights, encodeWeights, FORMAT_VERSION, parseCharacter } from '../src/core/codec';
 import { totalCost } from '../src/core/creature/blueprint';
 import { QUADRUPED } from '../src/core/creature/samples';
 import { Rng } from '../src/core/math/rng';
@@ -32,10 +32,10 @@ describe('キャラのJSON', () => {
   it('キャラの往復で、体・脳・育成状況が一致する', () => {
     const c = sample();
     const json = characterToJson(c);
-    expect(json.version).toBe(9);
+    expect(json.version).toBe(FORMAT_VERSION);
     expect(json.brains.motor!.inputs).toBe(26);
     expect(json.brains.motor!.outputs).toBe(4);
-    expect(json.brains.decision!.inputs).toBe(81);
+    expect(json.brains.decision!.inputs).toBe(102);
     const back = parseCharacter(JSON.stringify(json));
     expect(back.name).toBe(c.name);
     expect(back.blueprint).toEqual(c.blueprint);
@@ -145,13 +145,13 @@ describe('形式の移行', () => {
     v1.brains.decision = { inputs: 35, hidden: 24, outputs: 3, weights: encodeWeights(oldW) };
     v1.brains.motor = null; // この確認では判断脳だけを見る
     const c = parseCharacter(v1);
-    expect(c.decision!.length).toBe(24 * 81 + 24 + 4 * 24 + 4);
+    expect(c.decision!.length).toBe(24 * 102 + 24 + 4 * 24 + 4);
 
     const rng = new Rng(4);
     const oldEye = hexesWithin(2);
     for (let trial = 0; trial < 5; trial++) {
       const oldIn = Array.from({ length: 35 }, () => rng.range(-1, 1));
-      const newIn = Array.from({ length: 81 }, () => rng.range(-1, 1)); // 増えたマス・相手との接触はでたらめな値
+      const newIn = Array.from({ length: 102 }, () => rng.range(-1, 1)); // 増えたマス・相手との接触・相手の向きと体の形・傾きと回転はでたらめな値
       oldEye.forEach((h, i) => (newIn[EYE_HEXES.findIndex((e) => e.q === h.q && e.r === h.r)] = oldIn[i]));
       for (let i = 19; i < 35; i++) newIn[61 + (i - 19)] = oldIn[i];
       const a = new Float64Array(3);
@@ -162,7 +162,7 @@ describe('形式の移行', () => {
       expect([...b.subarray(0, 3)]).toEqual([...a]);
       expect(b[3]).toBe(0);
     }
-    expect(characterToJson(c).version).toBe(9);
+    expect(characterToJson(c).version).toBe(FORMAT_VERSION);
   });
 });
 

@@ -24,8 +24,9 @@ import { TASK_ORDER, type TaskName } from './training/tasks';
  *   7:関節の360°回転(spin)を追加(古いデータはそのまま読める)
  *   8:判断脳の入力の最後に、相手との接触4つ(触れているか・近づく速さ・いちばん近いブロックまでの距離・相手の周りの危険度)を追加(入力81)
  *   9:サッカー脳(役割ごと:shooter・blocker・carrier)を追加(古いデータはそのまま読める)
+ *  10:判断脳の入力の最後に、相手の向きと体の形9つ・自分と相手の体の傾きと回転12を追加(入力102)
  */
-export const FORMAT_VERSION = 9;
+export const FORMAT_VERSION = 10;
 
 interface BrainJson {
   inputs: number;
@@ -137,12 +138,16 @@ function migrate(input: { version?: unknown }): CharacterJson {
   if (json.version === 7) json = migrate7to8(json);
   // 8 → 9:サッカー脳を足しただけ
   if (json.version === 8) json = { ...json, version: 9 };
+  if (json.version === 9) json = migrate9to10(json);
   if (json.version === FORMAT_VERSION) return json;
   throw new Error(`対応していない形式のバージョンです:${String(json.version)}`);
 }
 
 /** 形式3〜7の判断脳の形(入力77・出力4) */
 const DECISION_V3 = { inputs: 77, hidden: DECISION_SHAPE.hidden, outputs: 4 };
+
+/** 形式8〜9の判断脳の形(入力81・出力4) */
+const DECISION_V8 = { inputs: 81, hidden: DECISION_SHAPE.hidden, outputs: 4 };
 
 /**
  * 7 → 8:判断脳の入力の最後に、相手との接触4つを足す。足した重みは0なので、動きは変わらない
@@ -153,10 +158,25 @@ function migrate7to8(json: CharacterJson): CharacterJson {
   const weights = remapInputs(
     decodeWeights(d.weights),
     DECISION_V3,
-    DECISION_SHAPE,
+    DECISION_V8,
     Array.from({ length: DECISION_V3.inputs }, (_, i) => i),
   );
-  return { ...json, version: 8, brains: { ...json.brains, decision: { ...DECISION_SHAPE, weights: encodeWeights(weights) } } };
+  return { ...json, version: 8, brains: { ...json.brains, decision: { ...DECISION_V8, weights: encodeWeights(weights) } } };
+}
+
+/**
+ * 9 → 10:判断脳の入力の最後に、相手の向きと体の形・体の傾きと回転を足す。足した重みは0なので、動きは変わらない
+ */
+function migrate9to10(json: CharacterJson): CharacterJson {
+  const d = json.brains?.decision;
+  if (!d || typeof d.weights !== 'string') return { ...json, version: 10 };
+  const weights = remapInputs(
+    decodeWeights(d.weights),
+    DECISION_V8,
+    DECISION_SHAPE,
+    Array.from({ length: DECISION_V8.inputs }, (_, i) => i),
+  );
+  return { ...json, version: 10, brains: { ...json.brains, decision: { ...DECISION_SHAPE, weights: encodeWeights(weights) } } };
 }
 
 /**
